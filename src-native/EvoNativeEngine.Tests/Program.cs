@@ -259,6 +259,16 @@ Assert(beastResult.Finished && optionalApps.Closed == 0 && workflowOps.Applied.S
 var replayDenied = false;
 try { await beast.StartAsync(new(beastPlan.Id, [], false, false, false, "INICIAR MODO BESTIA")); } catch (ArgumentException) { replayDenied = true; }
 Assert(replayDenied, "Beast preview cannot be replayed");
+var ownerBackups = new MemoryBackups(); var ownerBackend = new FakeLibraryBackend();
+var ownerOps = new FakeWorkflowOperations { Library = new LibraryOptimizationService(ownerBackups, librarySecurity, ownerBackend), Store = ownerBackups };
+var ownerTemplates = new OptimizationTemplateService(ownerOps, ownerBackups, librarySecurity);
+var ownerReceipt = await ownerTemplates.ApplyAsync("gaming", new(["library.gaming.game_mode"], "APLICAR PLANTILLA"));
+ownerOps.OnRestore = async id => {
+    var snapshot = await ownerBackups.GetLastStateAsync<LibraryOptimizationService.Snapshot>(LibraryOptimizationService.BackupKey(id));
+    await ownerBackups.SaveStateAsync(LibraryOptimizationService.BackupKey(id), snapshot! with { OwnerId = "foreign-replaced-between-check-and-write" });
+};
+var ownerRestore = await ownerTemplates.RestoreAsync(ownerReceipt.Id);
+Assert(!ownerRestore.Restored && ownerBackups.HasBackup(LibraryOptimizationService.BackupKey("library.gaming.game_mode")) && ownerBackend.Read(OptimizationLibrary.Definitions["library.gaming.game_mode"]).Value == "1", "Template revalidates snapshot ownership under mutation lock, even when replaced after preview check");
 var packageProvider = new FakeOptionalPackages();
 var debloat = new DebloatService(packageProvider, new MemoryBackups(), new OperationJournal());
 var packagePlan = JsonSerializer.SerializeToElement(await debloat.PreviewAsync()).GetProperty("Plan");
@@ -372,13 +382,20 @@ sealed class FakeOptionalApplications : IOptionalApplications
 }
 sealed class FakeWorkflowOperations : IOptimizationService
 {
+    public LibraryOptimizationService? Library;
+    public MemoryBackups? Store;
+    public Func<string,Task>? OnRestore;
     public List<string> Applied = [];
-    public Task<OperationResult> ApplyOperationAsync(string id) { Applied.Add(id); return Task.FromResult(new OperationResult(true,id,"apply",DateTime.UtcNow,0,[],null,null,null,false)); }
-    public Task<OperationResult> RestoreOperationAsync(string id) => Task.FromResult(new OperationResult(true,id,"restore",DateTime.UtcNow,0,[],null,null,null,true));
+    public Task<OperationResult> ApplyOperationAsync(string id) { Applied.Add(id); if (Library is not null && OptimizationLibrary.Definitions.ContainsKey(id)) return Library.ExecuteAsync(id,false); return Task.FromResult(new OperationResult(true,id,"apply",DateTime.UtcNow,0,[],null,null,null,false)); }
+    public async Task<OperationResult> RestoreOperationAsync(string id) {
+        if (OnRestore is not null) await OnRestore(id);
+        if (Library is not null && OptimizationLibrary.Definitions.ContainsKey(id)) return await Library.ExecuteAsync(id,true);
+        return new(true,id,"restore",DateTime.UtcNow,0,[],null,null,null,true);
+    }
     public Task<OperationResult> RestoreVerifiedAsync() => RestoreOperationAsync("all");
     public Task<IReadOnlyList<OperationCatalogItem>> GetCatalogAsync() => Task.FromResult<IReadOnlyList<OperationCatalogItem>>([]);
     public Task<IReadOnlyList<OperationHistoryItem>> GetHistoryAsync() => Task.FromResult<IReadOnlyList<OperationHistoryItem>>([]);
-    public Task<OperationStatusResponse> GetOperationStatusAsync(string id) => Task.FromResult(new OperationStatusResponse(id,true,true,false,null,new Cs2ProcessState(true,123,"Normal",10,100,DateTime.UtcNow,"test"),null));
+    public Task<OperationStatusResponse> GetOperationStatusAsync(string id) => Task.FromResult(new OperationStatusResponse(id,true,true,Store?.HasBackup(LibraryOptimizationService.BackupKey(id)) ?? false,null,new Cs2ProcessState(true,123,"Normal",10,100,DateTime.UtcNow,"test"),null));
     public Task<RealtimeTelemetryData> GetRealtimeTelemetryAsync() => throw new NotSupportedException();
 }
 sealed class FakeOptionalPackages : IOptionalPackages

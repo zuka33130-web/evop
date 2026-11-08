@@ -91,7 +91,12 @@ public sealed class OptimizationTemplateService(IOptimizationService operations,
                     var snapshot = await backups.GetLastStateAsync<LibraryOptimizationService.Snapshot>(LibraryOptimizationService.BackupKey(action));
                     if (snapshot?.OwnerId != receipt.Id.ToString("N"))
                         results.Add(new(false, action, "restore", DateTime.UtcNow, 0, ["Respaldo de otra sesión: no se toca."], null, null, "No se acredita propiedad del respaldo.", false));
-                    else results.Add(await operations.RestoreOperationAsync(action));
+                    else
+                    {
+                        LibraryOptimizationService.ReceiptOwner.Value = receipt.Id.ToString("N");
+                        try { results.Add(await operations.RestoreOperationAsync(action)); }
+                        finally { LibraryOptimizationService.ReceiptOwner.Value = null; }
+                    }
                 }
                 else results.Add(new(true, action, "restore", DateTime.UtcNow, 0, ["Sin respaldo pendiente: no se modificó Windows ni se certifica una restauración externa."], null, null, null, false));
             // Preserve original application audit, append restoration; never erase failed recovery information.

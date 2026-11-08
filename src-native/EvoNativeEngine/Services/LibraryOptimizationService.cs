@@ -97,7 +97,7 @@ public sealed class LibraryOptimizationService(IBackupManager backups, ISecurity
             {
                 snapshot = await backups.GetLastStateAsync<Snapshot>(BackupKey(id));
                 Validate(snapshot, id, d);
-                if (!restore && ReceiptOwner.Value is string owner && snapshot!.OwnerId != owner) throw new IOException("Respaldo existente de otra sesión: no se modifica.");
+                if (ReceiptOwner.Value is string owner && snapshot!.OwnerId != owner) throw new IOException("Respaldo existente de otra sesión: no se modifica.");
             }
             if (restore && snapshot is null) throw new IOException("No existe respaldo verificado.");
             before = backend.Read(d, restore ? snapshot!.Original.Context : null);
