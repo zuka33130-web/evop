@@ -360,6 +360,11 @@ app.MapPost("/api/recovery/cs2-expired", async (IBackupManager backups) =>
 
 app.MapGet("/api/library", () => Results.Ok(OptimizationLibrary.Definitions.Values));
 app.MapGet("/api/templates", () => Results.Ok(OptimizationTemplateService.Templates));
+app.MapGet("/api/templates/states", async (OptimizationTemplateService service) => Results.Ok(await service.SwitchStatesAsync()));
+app.MapPost("/api/templates/{id}/toggle", async (string id, TemplateToggleRequest request, OptimizationTemplateService service) =>
+{
+    try { return Results.Ok(await service.ToggleAsync(id, request)); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
 app.MapGet("/api/templates/receipts", async (OptimizationTemplateService service) => Results.Ok(await service.ReceiptsAsync()));
 app.MapGet("/api/templates/{id}/preview", async (string id, OptimizationTemplateService service) =>
 {

@@ -178,3 +178,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 @media(max-width:1023px) { .evo-shell{display:block} .evo-sidebar{position:fixed;left:0;transform:translateX(-100%);width:252px;transition:transform .2s} .evo-sidebar.is-open{transform:translateX(0)} .mobile-brand{display:flex;align-items:center;justify-content:space-between;padding:15px 22px;border-bottom:1px solid var(--line);background:#0e1013} .mobile-brand .brand-word{font-size:29px} .nav-backdrop{display:block;position:fixed;inset:0;background:#0009;z-index:45} .evo-topbar{height:55px} }
 @media(max-width:700px) { .evo-content{padding:24px 16px} .evo-topbar{padding-inline:16px}.breadcrumb>span{display:none}.topbar-status{font-size:9px} .page-heading{align-items:flex-start;flex-direction:column} .lab-grid{grid-template-columns:1fr}.result-grid{gap:7px}.result-grid .instrument-card{padding:14px}.metric-value{font-size:27px}.hero-panel{padding:23px}.hero-panel h2{font-size:24px}.definition-grid{grid-template-columns:1fr}.flow-card{padding:16px} }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important;transition:none!important;scroll-behavior:auto!important; } }
+
+/* Real template toggle: native state, keyboard operable, no optimistic fake ON. */
+.template-switch { flex-shrink:0; width:48px; height:28px; border:1px solid #4b5563; border-radius:999px; background:#252c35; padding:3px; display:flex; align-items:center; transition:background .18s,border-color .18s; }
+.template-switch-thumb { display:block; width:20px; height:20px; border-radius:50%; background:#a7b1be; box-shadow:0 1px 4px #0005; transition:transform .18s,background .18s; }
+.template-switch[aria-checked=true] { background:#ccf76a; border-color:#ccf76a; }
+.template-switch[aria-checked=true] .template-switch-thumb { transform:translateX(20px); background:#19240f; }
+.template-switch[data-partial=true] { background:#d5aa52; border-color:#d5aa52; }
+.template-switch:disabled { opacity:.4; cursor:not-allowed; }
+.template-switch[aria-busy=true] .template-switch-thumb { background:#f1f5f9; }

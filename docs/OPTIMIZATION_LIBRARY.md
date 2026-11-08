@@ -17,6 +17,20 @@ No son 58 mejoras de FPS demostradas. Incluyen rendimiento experimental, privaci
 - Cada snapshot creado por plantilla tiene su ID de propietario. La recuperación no toma un backup ajeno, incluso si otra solicitud se adelantó. El recibo se guarda antes de cada paso y se puede recuperar tras reiniciar el motor.
 - No se bloquean modificaciones externas ni se promete transacción/rollback automático. No hacer varias modificaciones manuales sobre el mismo módulo antes de evaluarlo.
 
+## Interruptor real de cada plantilla
+
+Cada tarjeta incluye un interruptor accesible (`role=switch`, teclado Espacio/Enter) que consulta el motor, no localStorage.
+
+- **Activar**: vuelve a revisar disponibilidad, muestra los módulos compatibles y sus riesgos, pide confirmación y ejecuta cambios nativos con respaldo/readback. El selector manual sigue disponible en «Revisar cambios».
+- **Desactivar**: restaura exclusivamente los originales de recibos que pertenecen a esa plantilla, sin tocar snapshots ajenos ni imponer valores de fábrica.
+- El interruptor no cambia anticipadamente de posición: espera la respuesta y consulta otra vez el estado nativo. Se bloquea durante capturas, cambios y lectura del estado.
+- Verde: valores destino leídos y cambios propios pendientes. Ámbar/parcial: aún hay respaldos propios que recuperar, aunque algún módulo haya fallado o cambiado externamente. Si falla OFF, permanece pendiente para reintentar.
+- «Ya configurada en Windows»: coincide sin respaldos propios. No se atribuye a EVO una activación ni se inventa qué valor restaurar.
+- Estado desconocido/desconectado: no se finge una activación. «Actualizar estado real» y volver a entrar en la sección consultan otra vez Windows.
+- La posición representa configuración/recuperación, no FPS ni efecto efectivo tras reiniciar. Algunos valores necesitan nueva sesión/reinicio y políticas/OEM pueden ignorarlos.
+
+API: GET `/api/templates/states` y POST `/api/templates/{id}/toggle`. El servidor revalida selección y propiedad de respaldos; el navegador no puede imponer claves, servicios o valores arbitrarios.
+
 ## Las nueve plantillas
 
 | Plantilla | Objetivo | Límite principal |

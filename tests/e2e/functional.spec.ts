@@ -23,6 +23,7 @@ test.beforeEach(async ({ page }) => {
     else if (path === '/api/library') data = [libraryFixture];
     else if (path === '/api/templates') data = [templateFixture];
     else if (path === '/api/templates/receipts') data = [];
+    else if (path === '/api/templates/states') data = [{templateId:'gaming',checked:false,state:'inactive',atTarget:0,total:1,receiptIds:[],message:'Sin cambios propios pendientes.'}];
     else if (path === '/api/templates/gaming/preview') data = { template:templateFixture, note:'Revisar antes de aplicar.', items:[{ definition:libraryFixture, available:true, hasBackup:false, current:{exists:false} }] };
     else if (path === '/api/beast/preview') data = { id:'beast-plan', expiresUtc:new Date(Date.now()+120000).toISOString(), candidates:[{pid:42,name:'chrome',path:'C:/Apps/chrome.exe',workingSetMb:200}], protected:['Steam y anticheat'], warning:'Nada se cierra por defecto.' };
     else if (path === '/api/debloat/preview') data = { plan:{id:'debloat-plan',candidates:[{name:'Microsoft.BingNews',packageFullName:'Microsoft.BingNews_test'}]}, definitions:[{name:'Microsoft.BingNews',label:'Microsoft News',loss:'Puede perder datos locales.'}], warning:'Solo usuario actual. Reinstalación no garantizada.' };
@@ -161,4 +162,41 @@ test('debloat defaults to no packages selected and warns about data loss', async
   await page.getByLabel('Confirmación debloat').fill('DESINSTALAR APLICACIONES');
   await expect(page.getByRole('button',{name:'Desinstalar 1 aplicaciones elegidas'})).toBeEnabled();
   await expect(page.getByText('Puede perder datos locales.',{exact:true})).toBeVisible();
+});
+
+
+test('template slider applies native changes and restores them without optimistic fake state', async ({ page }) => {
+  let checked=false;
+  const requests:unknown[]=[];
+  await page.route('**/api/templates/states',route=>route.fulfill({json:[{templateId:'gaming',checked,state:checked?'active':'inactive',atTarget:checked?1:0,total:1,receiptIds:checked?['owned-receipt']:[],message:checked?'Cambios respaldados.':'Originales restaurados.'}]}));
+  await page.route('**/api/templates/gaming/toggle',async route=>{
+    const body=route.request().postDataJSON();requests.push(body);
+    // Keep request pending to prove the control does not optimistically claim success.
+    await new Promise(resolve=>setTimeout(resolve,200));
+    checked=body.enabled;
+    await route.fulfill({json:{success:true,status:{templateId:'gaming',checked,state:checked?'active':'inactive'},receipts:[{id:'owned-receipt',finished:true,restored:!checked,results:[]}],message:'Verificado.'}});
+  });
+  await page.getByRole('navigation').getByRole('button',{name:'Plantillas y Modo Bestia',exact:true}).click();
+  const slider=page.getByRole('switch',{name:'Activar o desactivar Gaming · base limpia',exact:true});
+  await expect(slider).toBeEnabled();await expect(slider).not.toBeChecked();
+  page.on('dialog',dialog=>dialog.accept());
+  await slider.click();
+  await expect(slider).toBeDisabled();await expect(slider).not.toBeChecked();
+  await expect(slider).toBeChecked();await expect(slider).toBeEnabled();
+  await slider.press('Space');
+  await expect(slider).not.toBeChecked();await expect(slider).toBeEnabled();
+  expect(requests).toEqual([
+    {enabled:true,confirmation:'ACTIVAR PLANTILLA',selectedIds:[libraryFixture.id]},
+    {enabled:false,confirmation:'DESACTIVAR PLANTILLA',selectedIds:[]}
+  ]);
+});
+
+test('partial restore leaves template slider on for recovery',async ({page})=>{
+  await page.route('**/api/templates/states',route=>route.fulfill({json:[{templateId:'gaming',checked:true,state:'partial',atTarget:0,total:1,receiptIds:['owned-receipt'],message:'Parcial: respaldo pendiente.'}]}));
+  await page.route('**/api/templates/gaming/toggle',route=>route.fulfill({json:{success:false,status:{templateId:'gaming',checked:true,state:'partial'},receipts:[{id:'owned-receipt',restored:false,results:[{operationId:libraryFixture.id,success:false,errorMessage:'Sin permisos para restaurar.'}]}],message:'Restauración parcial: respaldo conservado.'}}));
+  await page.getByRole('navigation').getByRole('button',{name:'Plantillas y Modo Bestia',exact:true}).click();
+  const slider=page.getByRole('switch',{name:'Activar o desactivar Gaming · base limpia',exact:true});
+  await expect(slider).toBeChecked();page.on('dialog',dialog=>dialog.accept());await slider.click();
+  await expect(page.getByRole('alert')).toContainText('Restauración parcial');
+  await expect(slider).toBeChecked();await expect(slider).toBeEnabled();
 });

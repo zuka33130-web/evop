@@ -6,6 +6,7 @@ type Template = { id: string; name: string; description: string; risk: string; o
 type Preview = { template: Template; note: string; items: { definition: Definition; available: boolean; reason: string | null; hasBackup: boolean; current: unknown }[] };
 type BeastPlan = { id: string; expiresUtc: string; candidates: { pid:number; name:string; path:string; workingSetMb:number }[]; protected: string[]; warning:string };
 type DebloatPreview = { plan: { id:string; expiresUtc:string; candidates:{ name:string; packageFullName:string }[] }; definitions:{ name:string; label:string; loss:string }[]; warning:string };
+type TemplateState = { templateId:string; checked:boolean; state:'active'|'partial'|'inactive'|'configured'|'conflict'|'unknown'; atTarget:number; total:number; receiptIds:string[]; message:string };
 type Receipt = { id:string; templateId?:string; createdUtc?:string; restored?:boolean; finished?:boolean; results?: { operationId?:string; name?:string; action?:string; success:boolean; logs?:string[]; errorMessage?:string; message?:string }[]; applications?:{ pid:number; name:string; outcome:string; exited:boolean }[]; operations?:{ operationId:string; success:boolean; logs:string[]; errorMessage?:string }[]; template?: Receipt | null; limitations?:string[] };
 async function api(path:string, body?:unknown) {
   const response = await fetch(`${DEFAULT_NATIVE_ENGINE_URL}/api/${path}`, body === undefined ? {} : { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
@@ -28,10 +29,11 @@ function ReceiptCard({ receipt }: {receipt:Receipt}) {
     <details className="text-[10px] text-neutral-500"><summary>Recibo completo</summary><pre className="whitespace-pre-wrap break-all mt-3">{JSON.stringify(receipt,null,2)}</pre></details>
   </div>;
 }
-export function OptimizationStudio({ connected, globalBusy, onBusyChange, onMeasure, restorePriority }: {
-  connected:boolean; globalBusy:boolean; onBusyChange:(busy:boolean)=>void; onMeasure:()=>void; restorePriority:()=>Promise<unknown>;
+export function OptimizationStudio({ connected, globalBusy, onBusyChange, onMeasure, restorePriority, visible = true }: {
+  visible?:boolean; connected:boolean; globalBusy:boolean; onBusyChange:(busy:boolean)=>void; onMeasure:()=>void; restorePriority:()=>Promise<unknown>;
 }) {
   const [tab,setTab]=useState('templates'); const [templates,setTemplates]=useState<Template[]>([]);
+  const [states,setStates]=useState<Record<string,TemplateState>>({}); const [statesLoading,setStatesLoading]=useState(false); const [pendingTemplate,setPendingTemplate]=useState(''); const stateVersion=useRef(0);
   const [definitions,setDefinitions]=useState<Definition[]>([]); const [preview,setPreview]=useState<Preview|null>(null);
   const [selected,setSelected]=useState<string[]>([]); const [receipts,setReceipts]=useState<Receipt[]>([]);
   const [receipt,setReceipt]=useState<Receipt|null>(null); const [busy,setBusy]=useState(false); const lock=useRef(false);
@@ -41,6 +43,20 @@ export function OptimizationStudio({ connected, globalBusy, onBusyChange, onMeas
   const [pastSessions,setPastSessions]=useState<Receipt[]>([]); const [pastDebloat,setPastDebloat]=useState<Receipt[]>([]);
   const [packages,setPackages]=useState<string[]>([]); const [recoverId,setRecoverId]=useState('');
   useEffect(() => { onBusyChange(busy); },[busy,onBusyChange]);
+  async function loadStates() {
+    const version=++stateVersion.current;setStatesLoading(true);
+    try {
+      const rows=await api('templates/states');
+      if(!Array.isArray(rows) || rows.some(r=>typeof r.templateId!=='string' || typeof r.checked!=='boolean'))throw new Error('El motor no devuelve estados válidos de las plantillas.');
+      if(version===stateVersion.current)setStates(Object.fromEntries(rows.map(r=>[r.templateId,r])));
+    } catch(e) { if(version===stateVersion.current)setStates({});throw e; }
+    finally { if(version===stateVersion.current)setStatesLoading(false); }
+  }
+  useEffect(()=>{
+    if(!connected){stateVersion.current++;setStates({});setStatesLoading(false);return;}
+    if(!visible || lock.current)return;
+    void loadStates().catch(()=>setError('No se pudo leer el estado real de las plantillas. Actualiza antes de usar los interruptores.'));
+  },[connected,visible]);
   async function loadReceipts() { const rows=await api('templates/receipts'); if(Array.isArray(rows))setReceipts(rows); }
   useEffect(() => {
     if(!connected)return;
@@ -48,15 +64,37 @@ export function OptimizationStudio({ connected, globalBusy, onBusyChange, onMeas
   },[connected]);
   async function action(fn:()=>Promise<void>) {
     if(lock.current || globalBusy || !connected)return;
-    lock.current=true;setBusy(true);setError('');
+    lock.current=true;stateVersion.current++;setBusy(true);setError('');
     try{await fn();}catch(e){setError(e instanceof Error?e.message:'Falló el flujo. Conserva el recibo y revisa recuperación.');}
-    finally{lock.current=false;setBusy(false);}
+    finally{
+      try{await loadStates();}catch{setError(previous=>[previous,'No se pudo verificar el estado final. Actualiza antes de volver a usar el interruptor.'].filter(Boolean).join(' '));}
+      lock.current=false;setBusy(false);setPendingTemplate('');
+    }
   }
   const blocked=busy || globalBusy || !connected;
   function toggle<T>(values:T[],value:T,set:(v:T[])=>void){set(values.includes(value)?values.filter(v=>v!==value):[...values,value]);}
   async function inspect(id:string){await action(async()=>{setPreview(await api(`templates/${id}/preview`));setSelected([]);setReceipt(null);});}
   async function applyTemplate(){if(!preview || !confirm(`Aplicar ${selected.length} cambios reales de «${preview.template.name}». ${preview.template.risk} Si falla un paso se detiene la secuencia; podrás restaurar sus respaldos. ¿Continuar?`))return;await action(async()=>{setReceipt(await api(`templates/${preview.template.id}/apply`,{selectedIds:selected,confirmation:'APLICAR PLANTILLA'}));setPreview(null);setSelected([]);await loadReceipts();});}
   async function recoverTemplate(id:string){if(!confirm('Restaurar los respaldos que pertenecen a este recibo. No reinstala apps ni recupera trabajo de procesos cerrados. ¿Continuar?'))return;await action(async()=>{setReceipt(await api(`templates/receipts/${encodeURIComponent(id)}/restore`,{}));await loadReceipts();});}
+  async function switchTemplate(template:Template) {
+    if(blocked || statesLoading || !states[template.id])return;
+    const enabling=!states[template.id].checked;
+    await action(async()=>{
+      setPendingTemplate(template.id);
+      let ids:string[]=[];
+      if(enabling){
+        const review:Preview=await api(`templates/${template.id}/preview`);
+        const compatible=review.items.filter(i=>i.available);ids=compatible.map(i=>i.definition.id);
+        if(!ids.length){setPreview(review);throw new Error('No hay cambios nuevos compatibles para activar. Revisa permisos, respaldos previos o valores ya configurados.');}
+        if(!confirm(`ACTIVAR «${template.name}»\nSe aplicarán ${ids.length} de ${template.operations.length} módulos compatibles en Windows:\n${compatible.map(i=>'• '+i.definition.name).join('\n')}\n${template.risk}\nAl desactivar se restaurarán los originales guardados. ¿Continuar?`))return;
+      }else if(!confirm(`DESACTIVAR «${template.name}»\nSe restaurarán únicamente sus respaldos originales. No se impondrán valores de fábrica ni se tocarán respaldos ajenos. Algunos cambios requieren nueva sesión o reinicio. ¿Continuar?`))return;
+      const result:{success:boolean;status:TemplateState;receipts:Receipt[];message:string}=await api(`templates/${template.id}/toggle`,{enabled:enabling,confirmation:enabling?'ACTIVAR PLANTILLA':'DESACTIVAR PLANTILLA',selectedIds:ids});
+      if(result.receipts?.length)setReceipt(result.receipts.at(-1)!);
+      setPreview(null);setSelected([]);await loadReceipts();
+      if(!result.success)throw new Error(result.message || 'Aplicación/restauración parcial: revisa el resultado.');
+    });
+  }
+  const stateLabels:Record<string,string>={active:'Activada',partial:'Parcial · pendiente de restaurar',inactive:'Desactivada',configured:'Ya configurada en Windows',conflict:'Respaldo de otro módulo',unknown:'Verificación incompleta'};
   return <section className="space-y-5">
     <div className="page-heading"><div><span className="eyebrow">NATIVE OPTIMIZATION STUDIO</span><h1>Plantillas y Modo Bestia</h1><p>Controles explícitos, no un botón para apagar todo. {definitions.length ? `${definitions.length} acciones nuevas de Windows` : 'Catálogo del motor'}, con selección, lectura posterior y límites visibles.</p></div><button className="secondary-button" onClick={onMeasure}>Medir antes / después <ArrowUpRight size={14} /></button></div>
     <div className="phase-toggle" style={{maxWidth:680}}>{[['templates','Plantillas revisables'],['beast','Modo Bestia · CS2'],['debloat','Debloat de aplicaciones']].map(([id,label])=><button key={id} disabled={busy} aria-pressed={tab===id} onClick={()=>{setTab(id);setConfirmation('');setError('');}}>{label}</button>)}</div>
@@ -66,7 +104,11 @@ export function OptimizationStudio({ connected, globalBusy, onBusyChange, onMeas
     {error && <p role="alert" className="notice">{error}</p>}
     {tab==='templates' && <>
       <div className="notice">Rendimiento, privacidad y apariencia son objetivos distintos. Una escritura verificada no demuestra una mejora de FPS. Nada se aplica al abrir esta vista; prueba primero un módulo y mide.</div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{templates.map(t=><article className="instrument-card space-y-3" key={t.id}><div className="section-label"><Layers3 size={14} />{t.operations.length} módulos</div><h2 className="font-semibold text-sm">{t.name}</h2><p className="text-xs text-neutral-400 leading-6">{t.description}</p><p className="text-[10px] text-amber-200/75 leading-6">{t.risk}</p><button className="secondary-button" disabled={blocked} onClick={()=>inspect(t.id)}>Revisar cambios <ArrowUpRight size={12} /></button></article>)}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-neutral-400">Desliza para aplicar o restaurar. El estado se consulta en Windows, no se guarda solo en la interfaz.</p><button className="secondary-button" disabled={blocked || statesLoading} onClick={()=>action(loadStates)}>Actualizar estado real</button></div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{templates.map(t=>{const state=states[t.id];return <article className="instrument-card space-y-3" key={t.id}>
+        <div className="flex justify-between items-center gap-3"><div className="section-label"><Layers3 size={14} />{t.operations.length} módulos</div><button type="button" role="switch" aria-label={`Activar o desactivar ${t.name}`} aria-checked={state?.checked ?? false} aria-describedby={`template-state-${t.id}`} aria-busy={pendingTemplate===t.id} className="template-switch" data-partial={state?.state==='partial'} disabled={blocked || statesLoading || !state} onClick={()=>switchTemplate(t)}><span className="template-switch-thumb" /></button></div>
+        <h2 className="font-semibold text-sm">{t.name}</h2><p id={`template-state-${t.id}`} className={`text-[11px] ${state?.checked?'text-lime-200':'text-neutral-400'}`} role="status">{pendingTemplate===t.id?'Aplicando / restaurando…':statesLoading?'Consultando Windows…':state?`${stateLabels[state.state]} · ${state.atTarget}/${state.total} destinos coinciden`:'Estado no verificado'}</p>
+        <p className="text-xs text-neutral-400 leading-6">{t.description}</p><p className="text-[10px] text-amber-200/75 leading-6">{t.risk}</p>{state && <p className="text-[10px] text-neutral-400 leading-6">{state.message}</p>}<button className="secondary-button" disabled={blocked} onClick={()=>inspect(t.id)}>Revisar cambios <ArrowUpRight size={12} /></button></article>;})}</div>
       {preview && <div className="instrument-card space-y-4"><h2 className="text-lg font-semibold">Revisión · {preview.template.name}</h2><p className="text-xs text-neutral-400">{preview.note}</p><button className="secondary-button" disabled={blocked} onClick={()=>setSelected(preview.items.filter(i=>i.available).map(i=>i.definition.id))}>Seleccionar compatibles explícitamente</button>
         {preview.items.map(item=><div className="border-t border-neutral-800 pt-4" key={item.definition.id}><label className="flex items-start gap-3 text-sm"><input type="checkbox" disabled={blocked || !item.available} checked={selected.includes(item.definition.id)} onChange={()=>toggle(selected,item.definition.id,setSelected)} /><span>{item.definition.name}<small className="block text-[10px] text-neutral-400 mt-2">{item.definition.admin?'Administrador':'Usuario estándar'} · {item.definition.restart?'Nueva sesión/reinicio posible':'Sin reinicio declarado'} · {item.definition.kind}</small></span></label><p className="text-xs text-neutral-400 mt-3 leading-6">{item.definition.purpose}</p><p className="text-[10px] text-amber-200/75 mt-2">{item.definition.risk}</p>{!item.available && <p className="text-xs text-amber-300 mt-2">No disponible: {item.reason}</p>}<details className="text-[10px] text-neutral-500 mt-3"><summary>Valor real, destino y compatibilidad</summary><p className="break-all mt-2">{item.definition.hive} {item.definition.path} / {item.definition.valueName} → {item.definition.target}</p><pre className="whitespace-pre-wrap">{JSON.stringify(item.current,null,2)}</pre><p>{item.definition.applicability}</p></details></div>)}
         <button className="primary-button" disabled={blocked || !selected.length} onClick={applyTemplate}>Aplicar {selected.length} cambios seleccionados</button></div>}

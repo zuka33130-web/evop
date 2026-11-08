@@ -298,6 +298,31 @@ if (OperatingSystem.IsWindows())
     Console.WriteLine("PASS: actual isolated Windows HKCU backend write/read/type/absence fixture.");
 }
 
+var toggleStore = new MemoryBackups(); var toggleBackend = new FakeLibraryBackend();
+var toggleOps = new FakeWorkflowOperations { Library = new LibraryOptimizationService(toggleStore, librarySecurity, toggleBackend), Store = toggleStore };
+var toggleService = new OptimizationTemplateService(toggleOps, toggleStore, librarySecurity, toggleBackend);
+var toggleDefinition = OptimizationLibrary.Definitions["library.gaming.game_mode"];
+var toggleOriginal = toggleBackend.Read(toggleDefinition);
+Assert(!(await toggleService.SwitchStatesAsync()).Single(s => s.TemplateId == "gaming").Checked, "Slider starts without owned changes");
+var toggleOn = await toggleService.ToggleAsync("gaming", new(true,"ACTIVAR PLANTILLA",[toggleDefinition.Id]));
+Assert(toggleOn.Success && toggleOn.Status.Checked && toggleBackend.Read(toggleDefinition).Value == "1", "Slider ON executes real backend path");
+var toggleOff = await toggleService.ToggleAsync("gaming", new(false,"DESACTIVAR PLANTILLA"));
+Assert(toggleOff.Success && !toggleOff.Status.Checked && toggleBackend.Read(toggleDefinition) == toggleOriginal, "Slider OFF restores exact original, not guessed inverse");
+await toggleService.ToggleAsync("gaming", new(true,"ACTIVAR PLANTILLA",[toggleDefinition.Id]));
+toggleBackend.IgnoreWrites = true;
+var toggleFailure = await toggleService.ToggleAsync("gaming", new(false,"DESACTIVAR PLANTILLA"));
+Assert(!toggleFailure.Success && toggleFailure.Status.Checked && toggleStore.HasBackup(LibraryOptimizationService.BackupKey(toggleDefinition.Id)), "Failed OFF remains checked with recovery backup");
+toggleBackend.IgnoreWrites = false;
+Assert((await toggleService.ToggleAsync("gaming", new(false,"DESACTIVAR PLANTILLA"))).Success, "Retry OFF recovers original");
+foreach (var action in OptimizationTemplateService.Templates.Single(t => t.Id == "gaming").Operations)
+{
+    var definition = OptimizationLibrary.Definitions[action];
+    toggleBackend.Write(definition, new(true,definition.Kind,definition.Target));
+}
+var externallyConfigured = (await toggleService.SwitchStatesAsync()).Single(s => s.TemplateId == "gaming");
+Assert(!externallyConfigured.Checked && externallyConfigured.State == "configured", "Matching external settings are not owned or guessed reversible");
+Console.WriteLine("PASS: native template switches ON/OFF, exact restore, partial failure, retry and external configuration.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();

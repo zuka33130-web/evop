@@ -5,7 +5,13 @@ public sealed record OptimizationTemplate(string Id, string Name, string Descrip
 public sealed record TemplateRequest(string[] SelectedIds, string Confirmation);
 public sealed record TemplateReceipt(Guid Id, string TemplateId, DateTime CreatedUtc, List<string> Attempted,
     List<OperationResult> Results, bool Finished, bool Restored = false);
-public sealed class OptimizationTemplateService(IOptimizationService operations, IBackupManager backups, ISecurityService security)
+public sealed record TemplatePreviewItem(LibraryDefinition Definition, bool Available, string? Reason, bool HasBackup, LibraryValue? Current);
+public sealed record TemplatePreview(OptimizationTemplate Template, List<TemplatePreviewItem> Items, string Note);
+public sealed record TemplateSwitchState(string TemplateId, bool Checked, string State, int AtTarget, int Total,
+    Guid[] ReceiptIds, string Message);
+public sealed record TemplateToggleRequest(bool Enabled, string Confirmation, string[]? SelectedIds = null);
+public sealed record TemplateToggleResult(bool Success, TemplateSwitchState Status, List<TemplateReceipt> Receipts, string Message);
+public sealed class OptimizationTemplateService(IOptimizationService operations, IBackupManager backups, ISecurityService security, ILibraryBackend? statusBackend = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     public static readonly OptimizationTemplate[] Templates = [
@@ -19,10 +25,10 @@ public sealed class OptimizationTemplateService(IOptimizationService operations,
         new("network", "Sesión de red y periféricos", "Sin P2P de actualizaciones y pruebas de políticas Wi-Fi/USB AC.", "No mejora el ping de Internet por sí mismo; mayor consumo y políticas sujetas al hardware.", ["library.network.delivery_peers","library.power.wifi","library.power.usb"]),
         new("disk_diagnosis", "Disco ocupado · diagnóstico temporal", "Prueba pausa de búsqueda y SysMain; evita apagado del disco en AC.", "Puede empeorar búsqueda y apertura de apps. No desactiva inicio de servicios ni Windows Update.", ["library.service.search","library.service.sysmain","library.power.disk"])
     ];
-    public async Task<object> PreviewAsync(string id)
+    public async Task<TemplatePreview> PreviewAsync(string id)
     {
         var template = Templates.SingleOrDefault(t => t.Id == id) ?? throw new ArgumentException("Plantilla desconocida.");
-        var rows = new List<object>(); var backend = new WindowsLibraryBackend();
+        var rows = new List<TemplatePreviewItem>(); var backend = statusBackend ?? new WindowsLibraryBackend();
         foreach (var operationId in template.Operations)
         {
             var d = OptimizationLibrary.Definitions[operationId];
@@ -35,9 +41,9 @@ public sealed class OptimizationTemplateService(IOptimizationService operations,
                 if (current.Exists && current.Kind == d.Kind && current.Value == d.Target)
                     throw new InvalidOperationException("Ya tiene el valor objetivo. No se necesita una escritura ni se atribuye una mejora.");
             } catch (Exception ex) { available = false; reason = ex.Message; }
-            rows.Add(new { Definition = d, Available = available, Reason = reason, HasBackup = hasBackup, Current = current });
+            rows.Add(new(d, available, reason, hasBackup, current));
         }
-        return new { Template = template, Items = rows, Note = "Vista previa orientativa, revalidada al aplicar. No todos los valores leídos tienen efecto en esta versión/hardware." };
+        return new(template, rows, "Vista previa orientativa, revalidada al aplicar. No todos los valores leídos tienen efecto en esta versión/hardware.");
     }
     public async Task<TemplateReceipt> ApplyAsync(string id, TemplateRequest request)
     {
@@ -105,6 +111,78 @@ public sealed class OptimizationTemplateService(IOptimizationService operations,
             return receipt;
         }
         finally { gate.Release(); }
+    }
+    public async Task<TemplateSwitchState[]> SwitchStatesAsync()
+    {
+        // Read ownership + current values under the same lock as native mutations. Never infer ON from localStorage.
+        await LibraryOptimizationService.Gate.WaitAsync();
+        try
+        {
+            var backend = statusBackend ?? new WindowsLibraryBackend();
+            var states = new List<TemplateSwitchState>();
+            foreach (var template in Templates)
+            {
+                var owners = new HashSet<Guid>(); int targets = 0, foreign = 0, errors = 0;
+                foreach (var id in template.Operations)
+                {
+                    var d = OptimizationLibrary.Definitions[id];
+                    var key = LibraryOptimizationService.BackupKey(id);
+                    var snapshot = backups.HasBackup(key) ? await backups.GetLastStateAsync<LibraryOptimizationService.Snapshot>(key) : null;
+                    bool owned = false;
+                    if (snapshot?.Version == 1 && snapshot.Id == id && Guid.TryParseExact(snapshot.OwnerId, "N", out var owner))
+                    {
+                        var receipt = await backups.GetLastStateAsync<TemplateReceipt>("template." + owner.ToString("N"));
+                        if (receipt?.Id == owner && receipt.TemplateId == template.Id && receipt.Attempted?.Contains(id) == true)
+                        { owners.Add(owner); owned = true; }
+                    }
+                    if (backups.HasBackup(key) && !owned) foreign++;
+                    try
+                    {
+                        var current = backend.Read(d);
+                        bool activePlan = d.Kind != "Power" || !owned || current.Context == snapshot!.Original.Context;
+                        if (current.Exists && current.Kind == d.Kind && current.Value == d.Target && activePlan) targets++;
+                    }
+                    catch { errors++; }
+                }
+                var enabled = owners.Count > 0;
+                var state = enabled ? targets == template.Operations.Length && errors == 0 ? "active" : "partial"
+                    : errors > 0 ? "unknown" : targets == template.Operations.Length ? "configured" : foreign > 0 ? "conflict" : "inactive";
+                var message = state switch {
+                    "active" => "Activa: valores leídos y respaldos de esta plantilla. Desactivar restaura sus originales.",
+                    "partial" => "Parcial o modificada externamente: hay cambios respaldados. Desactiva para recuperarlos; no se certifica toda la plantilla.",
+                    "configured" => "Windows ya coincide con todos los destinos, sin cambios propios pendientes. No se inventan valores para desactivarlos.",
+                    "conflict" => "Hay respaldos de otros módulos o plantillas; no se deshacen desde este interruptor.",
+                    "unknown" => "No se pudieron leer todos los estados. Revisa disponibilidad y permisos; no se asume activación.",
+                    _ => "Desactivada: sin cambios propios pendientes. Activar aplicará solo los módulos compatibles confirmados." };
+                if (enabled && template.Operations.Any(id => OptimizationLibrary.Definitions[id].Restart)) message += " Puede requerir nueva sesión/reinicio; no se certifica aquí su efecto tras reiniciar.";
+                states.Add(new(template.Id, enabled, state, targets, template.Operations.Length, owners.ToArray(), message));
+            }
+            return states.ToArray();
+        }
+        finally { LibraryOptimizationService.Gate.Release(); }
+    }
+    public async Task<TemplateToggleResult> ToggleAsync(string id, TemplateToggleRequest request)
+    {
+        if (!Templates.Any(t => t.Id == id)) throw new ArgumentException("Plantilla desconocida.");
+        if (request.Confirmation != (request.Enabled ? "ACTIVAR PLANTILLA" : "DESACTIVAR PLANTILLA")) throw new ArgumentException("Confirmación explícita requerida.");
+        var before = (await SwitchStatesAsync()).Single(s => s.TemplateId == id);
+        var receipts = new List<TemplateReceipt>();
+        if (request.Enabled)
+        {
+            if (before.Checked) return new(true, before, receipts, "Ya hay cambios propios pendientes; no se duplicó la activación.");
+            var preview = await PreviewAsync(id);
+            var selected = request.SelectedIds ?? [];
+            if (selected.Length == 0 || selected.Any(action => !preview.Items.Any(i => i.Definition.Id == action && i.Available)))
+                throw new ArgumentException("Los cambios seleccionados ya no están disponibles. Actualiza la revisión antes de activar.");
+            receipts.Add(await ApplyAsync(id, new(selected, "APLICAR PLANTILLA")));
+        }
+        else
+            foreach (var owner in before.ReceiptIds) receipts.Add(await RestoreAsync(owner));
+        var after = (await SwitchStatesAsync()).Single(s => s.TemplateId == id);
+        bool success = request.Enabled ? receipts.All(r => r.Finished && r.Results.All(result => result.Success))
+            : receipts.All(r => r.Restored) && !after.Checked;
+        return new(success, after, receipts, success ? request.Enabled ? "Cambios aplicados y estado consultado en Windows." : "Respaldos propios restaurados; estado consultado en Windows."
+            : "Resultado parcial: revisa los pasos. El interruptor conserva el estado pendiente para recuperación.");
     }
     public Task<TemplateReceipt[]> ReceiptsAsync() => WorkflowReceipts.ReadAsync<TemplateReceipt>(backups, "template", r => r.Id);
 }
