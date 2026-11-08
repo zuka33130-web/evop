@@ -30,6 +30,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const menuItems = [
+    { id: 'advisor', label: 'Auditor local', sublabel: 'Hardware, software y recomendaciones', icon: Server, badge: 'Local' },
     { id: 'stability', label: 'Estabilidad y 1% Low', sublabel: 'Capturas reales y comparación', icon: Crosshair, badge: 'Medido' },
     { id: 'native-operations', label: 'Operaciones Windows', sublabel: 'Catálogo real y restauración', icon: Server, badge: 'Nativo' },
     {
@@ -48,8 +49,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'cleaner',
-      label: 'Motor de Limpieza Profunda',
-      sublabel: 'EvoClean & Shaders DirectX',
+      label: 'Limpieza inteligente',
+      sublabel: 'Vista previa, cuarentena y restauración',
       icon: Trash2,
       badge: 'EvoClean'
     },

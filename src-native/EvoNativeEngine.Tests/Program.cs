@@ -147,6 +147,60 @@ Assert(!SessionAuthentication.IsLocalOrigin("http://localhost:48120@evil.example
 Assert(!SessionAuthentication.IsLocalOrigin("null", 48120), "Opaque origin denied");
 Console.WriteLine("PASS: per-session authentication and exact local-origin validation.");
 
+var fixtureRoot = Path.Combine(Path.GetTempPath(), "evo-safe-path-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(fixtureRoot);
+try
+{
+    Assert(SmartCleanupService.SafePath(fixtureRoot, Path.Combine(fixtureRoot, "inside.tmp")), "Allow child file");
+    Assert(!SmartCleanupService.SafePath(fixtureRoot, fixtureRoot), "Never operate on root itself");
+    Assert(!SmartCleanupService.SafePath(fixtureRoot, Path.Combine(fixtureRoot, "..", "outside.tmp")), "Reject path traversal");
+}
+finally { Directory.Delete(fixtureRoot); }
+if (OperatingSystem.IsWindows())
+{
+    var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EvoOptimizer", "TestFixtures-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var file = Path.Combine(root, "old.tmp");
+        await File.WriteAllTextAsync(file, "recoverable-test-payload");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-10));
+        var recent = Path.Combine(root, "recent.tmp"); await File.WriteAllTextAsync(recent, "keep");
+        var cleaner = new SmartCleanupService(new MemoryBackups(), new OperationJournal(), new() { ["fixture"] = root });
+        var plan = await cleaner.ScanAsync();
+        var candidate = plan.Items.Single(i => i.Path == file);
+        Assert(!plan.Items.Any(i => i.Path == recent), "Do not clean recent files");
+        var quarantined = await cleaner.QuarantineAsync(new(plan.Id, [candidate.Id]));
+        Assert(!File.Exists(file) && quarantined.BytesQuarantined > 0, "Actually moved to quarantine, not fabricated freed bytes");
+        var restored = await cleaner.RestoreAsync(quarantined.Id);
+        Assert(restored.Errors.Count == 0 && await File.ReadAllTextAsync(file) == "recoverable-test-payload", "Restore exact file content");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-10));
+        plan = await cleaner.ScanAsync(); candidate = plan.Items.Single(i => i.Path == file);
+        await File.WriteAllTextAsync(file, "changed-since-scan");
+        var skipped = await cleaner.QuarantineAsync(new(plan.Id, [candidate.Id]));
+        Assert(skipped.Errors.Count > 0 && File.Exists(file), "Revalidate changed file before moving");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-10));
+        plan = await cleaner.ScanAsync(); candidate = plan.Items.Single(i => i.Path == file);
+        quarantined = await cleaner.QuarantineAsync(new(plan.Id, [candidate.Id]));
+        var refusedPurge = false;
+        try { await cleaner.PurgeAsync(quarantined.Id, "wrong"); } catch (ArgumentException) { refusedPurge = true; }
+        Assert(refusedPurge, "Irreversible purge requires exact confirmation");
+        var purged = await cleaner.PurgeAsync(quarantined.Id, "ELIMINAR DEFINITIVAMENTE");
+        Assert(purged.Errors.Count == 0 && purged.BytesQuarantined == 0 && !File.Exists(file), "Purge real quarantined file");
+        Assert(SmartCleanupService.MissingLocalExecutable("rundll32.exe something.dll") is null, "Do not guess relative command or COM/DLL targets");
+        Assert(SmartCleanupService.MissingLocalExecutable(@"\\server\share\absent.exe") is null, "Do not classify offline network programs as orphaned");
+    }
+    finally { Directory.Delete(root, true); }
+}
+var advisorHardware = new EvoNativeEngine.Models.SystemHardwareReport(
+    new("Windows", "11", "test", "x64", "test", null, 1), new("Test CPU", "Test", 4, 8, 3000, "x64", "test"),
+    new(8UL * 1024 * 1024 * 1024, 512UL * 1024 * 1024, 8, .5, 7.5, 93.75), [],
+    [new("C:", "System", "Fixed", "NTFS", 1000, 50, 100, 5, 95, 5, true)], DateTime.UtcNow, 1, "test", true, false);
+var advice = LocalAuditAdvisor.Recommend(advisorHardware, [new("cs2", 1024)], 12);
+Assert(advice.Any(a => a.Id == "memory-pressure") && advice.Any(a => a.Id.StartsWith("disk-")), "Advice tied to measured pressure and disk space");
+Assert(advice.Any(a => a.OperationId == "gaming.cs2.priority" && a.RequiresAbTest), "Never advertise priority as a proven win");
+Console.WriteLine("PASS: path boundaries, real quarantine/restore/purge fixtures, stale preview checks and evidence-based local recommendations.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();

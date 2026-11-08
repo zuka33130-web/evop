@@ -34,7 +34,8 @@ import { Sidebar } from './components/Sidebar';
 import { FrameStabilityLab } from './components/FrameStabilityLab';
 import { NativeOperationsPanel } from './components/NativeOperationsPanel';
 import { KnowledgeBase } from './components/KnowledgeBase';
-import { EvoCleaner } from './components/EvoCleaner';
+import { SmartCleanup } from './components/SmartCleanup';
+import { LocalAuditAdvisor } from './components/LocalAuditAdvisor';
 import { useNativeBridge, SystemHardwareReport } from './services/nativeBridge';
 import { Server, Play, PlayCircle, Sliders, CheckCircle2 } from 'lucide-react';
 
@@ -139,6 +140,7 @@ export default function App() {
           onOpenDiagnostics={() => setActiveTab('diagnostics')}
         />
 
+        {activeTab === 'advisor' && <LocalAuditAdvisor connected={isConnected} apply={applyOp} onMeasure={() => setActiveTab('stability')} />}
         {activeTab === 'stability' && <FrameStabilityLab connected={isConnected} />}
         {activeTab === 'native-operations' && <NativeOperationsPanel connected={isConnected} catalog={catalog} apply={applyOp} restore={restoreOp} />}
 
@@ -411,7 +413,7 @@ export default function App() {
 
         {/* Tab 3: Motor de Limpieza Profunda "EvoClean" */}
         {activeTab === 'cleaner' && (
-          <EvoCleaner isNativeConnected={isConnected} onRunClean={runClean} />
+          <SmartCleanup connected={isConnected} />
         )}
 
         {/* Tab 4: Laboratorio PresentMon (Telemetría Empírica & Sub-tabs de Rendimiento) */}

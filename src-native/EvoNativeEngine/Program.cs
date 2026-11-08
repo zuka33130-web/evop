@@ -48,6 +48,8 @@ builder.Services.AddSingleton<IEvoCleanService, EvoCleanService>();
 builder.Services.AddSingleton<OperationJournal>();
 builder.Services.AddSingleton<BenchmarkSessionService>();
 builder.Services.AddSingleton<OptimizationExperimentService>();
+builder.Services.AddSingleton<SmartCleanupService>();
+builder.Services.AddSingleton<LocalAuditAdvisor>();
 
 // CORS: Permitir exclusivamente solicitudes de clientes locales (Vite dev server, Tauri, etc.)
 builder.Services.AddCors(options =>
@@ -315,6 +317,32 @@ app.MapPost("/api/desktop/shutdown", (IHostApplicationLifetime lifetime) =>
     return Results.Ok(new { stopping = true });
 });
 
+app.MapPost("/api/cleanup/preview", async (SmartCleanupService cleanup) =>
+{
+    try { return Results.Ok(await cleanup.ScanAsync()); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/cleanup/quarantine", async (CleanupSelection selection, SmartCleanupService cleanup) =>
+{
+    try { return Results.Ok(await cleanup.QuarantineAsync(selection)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/cleanup/restore/{id:guid}", async (Guid id, SmartCleanupService cleanup) =>
+{
+    try { return Results.Ok(await cleanup.RestoreAsync(id)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/cleanup/purge/{id:guid}", async (Guid id, PurgeConfirmation request, SmartCleanupService cleanup) =>
+{
+    try { return Results.Ok(await cleanup.PurgeAsync(id, request.Confirmation)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapGet("/api/advisor/audit", async (LocalAuditAdvisor advisor) =>
+{
+    try { return Results.Ok(await advisor.AuditAsync()); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
 // Endpoint raíz informativo en modo API; en escritorio se sirve React desde wwwroot.
 if (!hasFrontend) app.MapGet("/", () => Results.Json(new
 {
@@ -333,3 +361,5 @@ app.Logger.LogInformation("Seguridad: Enlace exclusivo Loopback (Regla 5)");
 app.Logger.LogInformation("=================================================");
 
 app.Run();
+
+public sealed record PurgeConfirmation(string Confirmation);
