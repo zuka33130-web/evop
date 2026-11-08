@@ -136,6 +136,17 @@ Parallel.For(0, 100, _ => revisionJournal.Touch());
 Assert(revisionJournal.Revision == 100, "Concurrent operation revision tracking");
 Console.WriteLine("PASS: A/B improvement, unchanged, regression, inconclusive data/provenance, context validation and revision counter.");
 
+var session = new SessionAuthentication(new string('a', 64));
+Assert(session.Required && session.Authorize(new string('a', 64)), "Session authorizes exact token");
+Assert(!session.Authorize(null) && !session.Authorize(new string('b', 64)) && !session.Authorize("short"), "Reject missing/wrong token");
+Assert(!new SessionAuthentication(null).Required, "Standalone compatibility is explicit");
+Assert(SessionAuthentication.IsLocalOrigin("http://127.0.0.1:48120", 48120), "Desktop origin allowed");
+Assert(!SessionAuthentication.IsLocalOrigin("http://127.0.0.1:3000", 48120), "Different port denied in desktop mode");
+Assert(!SessionAuthentication.IsLocalOrigin("https://localhost.evil.example:48120", 48120), "Reject suffix spoofing");
+Assert(!SessionAuthentication.IsLocalOrigin("http://localhost:48120@evil.example", 48120), "Reject userinfo spoofing");
+Assert(!SessionAuthentication.IsLocalOrigin("null", 48120), "Opaque origin denied");
+Console.WriteLine("PASS: per-session authentication and exact local-origin validation.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();

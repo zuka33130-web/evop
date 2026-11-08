@@ -31,3 +31,24 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: npm run lint
       - run: npm run build
+  desktop:
+    needs: [build, frontend]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: bun install --frozen-lockfile
+      - run: ./scripts/Publish-EvoDesktop.ps1
+      - run: ./scripts/Test-EvoDesktopPackage.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EvoDesktop-win-x64
+          path: dist-native/desktop-win-x64/

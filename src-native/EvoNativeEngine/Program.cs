@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.FileProviders;
 using EvoNativeEngine.Models;
 using EvoNativeEngine.Services;
 using Microsoft.AspNetCore.Builder;
@@ -23,10 +24,14 @@ var builder = WebApplication.CreateBuilder(args);
 // Configuración de Kestrel: enlace estricto y exclusivo a Loopback (127.0.0.1)
 const int defaultPort = 48120;
 int port = defaultPort;
-if (int.TryParse(Environment.GetEnvironmentVariable("EVO_ENGINE_PORT"), out int customPort))
+if (int.TryParse(Environment.GetEnvironmentVariable("EVO_ENGINE_PORT"), out int customPort) && customPort is > 0 and <= 65535)
 {
     port = customPort;
 }
+
+var sessionAuthentication = new SessionAuthentication(Environment.GetEnvironmentVariable("EVO_ENGINE_TOKEN"));
+var frontendDirectory = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+var hasFrontend = File.Exists(Path.Combine(frontendDirectory, "index.html"));
 
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -51,9 +56,8 @@ builder.Services.AddCors(options =>
     {
         policy.SetIsOriginAllowed(origin =>
         {
-            if (string.IsNullOrEmpty(origin)) return false;
-            var uri = new Uri(origin);
-            return uri.Host is "localhost" or "127.0.0.1" || origin.StartsWith("tauri://") || origin.StartsWith("http://localhost:") || origin.StartsWith("http://127.0.0.1:");
+            return SessionAuthentication.IsLocalOrigin(origin, port) ||
+                (!sessionAuthentication.Required && SessionAuthentication.IsLocalOrigin(origin, 3000));
         })
         .AllowAnyHeader()
         .AllowAnyMethod();
@@ -63,6 +67,34 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors("LocalIpcPolicy");
+app.Use(async (context, next) =>
+{
+    // Reject DNS-rebinding hosts even in standalone development mode.
+    if (context.Request.Host.Host is not ("127.0.0.1" or "localhost"))
+    { context.Response.StatusCode = 403; return; }
+    if (sessionAuthentication.Required)
+    {
+        var candidate = context.Request.Headers["X-Evo-Session"].FirstOrDefault() ?? context.Request.Cookies["EvoSession"];
+        if (!sessionAuthentication.Authorize(candidate))
+        { context.Response.StatusCode = 401; return; }
+        var origin = context.Request.Headers.Origin.FirstOrDefault();
+        if (!string.IsNullOrEmpty(origin) && !SessionAuthentication.IsLocalOrigin(origin, port))
+        { context.Response.StatusCode = 403; return; }
+    }
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    if (hasFrontend) context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
+    await next();
+});
+if (hasFrontend)
+{
+    var provider = new PhysicalFileProvider(frontendDirectory);
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = provider });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = provider });
+}
+
 app.Use(async (context, next) =>
 {
     if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/api/clean"))
@@ -276,8 +308,15 @@ app.MapPost("/api/system/settings/{id}", (string id) =>
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 
-// Endpoint raíz informativo
-app.MapGet("/", () => Results.Json(new
+app.MapPost("/api/desktop/shutdown", (IHostApplicationLifetime lifetime) =>
+{
+    if (!sessionAuthentication.Required) return Results.NotFound();
+    _ = Task.Run(async () => { await Task.Delay(200); lifetime.StopApplication(); });
+    return Results.Ok(new { stopping = true });
+});
+
+// Endpoint raíz informativo en modo API; en escritorio se sirve React desde wwwroot.
+if (!hasFrontend) app.MapGet("/", () => Results.Json(new
 {
     name = "EVOOPTIMIZER Native Engine",
     version = "1.1.0",
@@ -286,6 +325,7 @@ app.MapGet("/", () => Results.Json(new
     docs = "Motor de Operaciones Reales de Windows 11 conectado. Visita /api/operations para ver el catálogo."
 }));
 
+if (!sessionAuthentication.Required) app.Logger.LogWarning("Modo local de desarrollo SIN autenticación. No exponer ni redirigir el puerto; escritorio debe iniciar con EVO_ENGINE_TOKEN.");
 app.Logger.LogInformation("=================================================");
 app.Logger.LogInformation("EVOOPTIMIZER Native Engine 1.1 - Motor Real de Operaciones");
 app.Logger.LogInformation("Escuchando en: http://127.0.0.1:{Port}", port);

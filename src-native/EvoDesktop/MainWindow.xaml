@@ -1,0 +1,7 @@
+<Window x:Class="EvoDesktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:wv="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+  Title="EVO Optimizer" Width="1400" Height="900" MinWidth="900" MinHeight="600" Background="#0a0a0a" WindowStartupLocation="CenterScreen">
+  <Grid>
+    <wv:WebView2 x:Name="Browser" Visibility="Hidden" />
+    <TextBlock x:Name="Status" Text="Iniciando el motor local…" Foreground="#d4d4d4" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="680" />
+  </Grid>
+</Window>
