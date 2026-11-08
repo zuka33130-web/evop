@@ -19,6 +19,7 @@ public interface IOptimizationService
     Task<IReadOnlyList<OperationHistoryItem>> GetHistoryAsync();
     Task<OperationStatusResponse> GetOperationStatusAsync(string operationId);
     Task<RealtimeTelemetryData> GetRealtimeTelemetryAsync();
+    Task<OperationResult> RestoreVerifiedAsync();
 }
 
 public class OptimizationService : IOptimizationService
@@ -56,27 +57,27 @@ public class OptimizationService : IOptimizationService
 
         // 3. Los 15 Modos Cortex
         ["cortex.mode.bestia"] = new("cortex.mode.bestia", "Prioridad de Juego", "Prioridad High para la instancia actual de CS2. Conserva afinidad y aplicaciones secundarias.", "Cortex", false, true, true),
-        ["cortex.mode.torneo"] = new("cortex.mode.torneo", "Modo Torneo (Optimización DWM / Shell)", "Ajusta transparencias y composición pesada de ventanas para liberar memoria gráfica.", "Cortex", false, true, true, true, "¿Deseas optimizar la composición visual de Windows para máxima fluidez en CS2?"),
+        ["cortex.mode.torneo"] = new("cortex.mode.torneo", "Modo Torneo (Optimización DWM / Shell)", "Desactiva únicamente EnableTransparency de usuario, guardando su valor original. No garantiza mejora de FPS.", "Cortex", false, true, true, true, "¿Deseas optimizar la composición visual de Windows para máxima fluidez en CS2?"),
         ["cortex.mode.nucleo"] = new("cortex.mode.nucleo", "Plan de Alto Rendimiento", "Activa el plan de Alto Rendimiento existente y respalda el GUID original. No modifica BCD ni TRIM.", "Cortex", true, true, true),
         ["cortex.mode.timers"] = new("cortex.mode.timers", "Fix Timers TSC (Anti-HPET lento)", "Elimina temporizadores lentos y activa TSC nativo a 4GHz sin jitter.", "Cortex", true, true, true),
-        ["cortex.mode.gpu"] = new("cortex.mode.gpu", "Boost Intel UHD + MPO Fix", "Configura OverlayTestMode=5 para evitar parpadeos y asegura HAGS activo.", "Cortex", false, true, true),
-        ["cortex.mode.stutter"] = new("cortex.mode.stutter", "Fix Stutter RAM Definitivo", "Desactiva PageCombining mediante MMAgent, guardando el valor original. No purga RAM ni detiene SysMain.", "Cortex", true, true, true),
+        ["cortex.mode.gpu"] = new("cortex.mode.gpu", "Prueba de configuración GPU", "Aplica MPO, HAGS y TDR con respaldos individuales. Requiere administrador y puede requerir reinicio; no prueba soporte efectivo del driver.", "Cortex", false, true, true),
+        ["cortex.mode.stutter"] = new("cortex.mode.stutter", "Prueba PageCombining", "Desactiva PageCombining mediante MMAgent, guardando el valor original. No purga RAM ni detiene SysMain.", "Cortex", true, true, true),
         ["cortex.mode.network"] = new("cortex.mode.network", "Red Competitiva + Nagle OFF", "Establece TcpAckFrequency=1 y TCPNoDelay=1 en las interfaces activas.", "Cortex", true, true, true),
         ["cortex.mode.debloat"] = new("cortex.mode.debloat", "Debloat Quirúrgico Seguro", "Detiene DiagTrack y MapsBroker de forma reversible. No desinstala aplicaciones ni modifica seguridad.", "Cortex", true, true, true),
         ["cortex.mode.services"] = new("cortex.mode.services", "Servicios Gaming Switcher", "Detiene únicamente DiagTrack y MapsBroker si existen, conservando su estado real. No cambia el inicio automático.", "Cortex", true, true, true),
         ["cortex.mode.vbs"] = new("cortex.mode.vbs", "VBS / HVCI Toggle", "Ajusta aislamiento de virtualización de memoria. Requiere confirmación y reinicio.", "Cortex", true, true, true, true, "Modificar VBS/HVCI puede requerir reiniciar Windows. ¿Confirmar acción?"),
         ["cortex.mode.cleanup"] = new("cortex.mode.cleanup", "Limpieza Total NVMe + Cachés", "Purga archivos temporales seguros y limpia cachés de DirectX/Steam.", "Cortex", false, false, true),
         ["cortex.mode.watchdog"] = new("cortex.mode.watchdog", "Consultar CS2", "Consulta puntual del proceso sin cambiar prioridad ni afinidad. No instala un watchdog.", "Cortex", false, false, true),
-        ["cortex.mode.bench"] = new("cortex.mode.bench", "Benchmark y Diagnóstico en Vivo", "Analiza en tiempo real clocks, RAM, latencia y temperatura física.", "Cortex", false, false, true),
+        ["cortex.mode.bench"] = new("cortex.mode.bench", "Actualizar diagnóstico", "Lectura puntual del hardware. Para benchmarks utiliza las capturas de estabilidad.", "Cortex", false, false, true),
         ["cortex.mode.cfg"] = new("cortex.mode.cfg", "Desplegar CFG y Video.txt", "Genera y despliega autoexec.cfg optimizado en la ruta de CS2.", "Cortex", false, true, true),
         ["cortex.mode.restore"] = new("cortex.mode.restore", "Restaurar Todo al Modo Stock", "Revierte todos los valores modificados a sus snapshots originales de Windows.", "Cortex", false, false, true),
 
         // 4. Tweaks Atómicos
         ["tweak.cpu.affinity_15"] = new("tweak.cpu.affinity_15", "Afinidad explícita 0-3 (Máscara 15)", "Restringe CS2 a los primeros cuatro procesadores lógicos, sin detectar P-Cores. Puede reducir rendimiento.", "CPU", false, true, true, true, "La máscara 15 no garantiza P-Cores y puede empeorar FPS. ¿Aplicar para una prueba A/B?"),
         ["tweak.cpu.idledisable"] = new("tweak.cpu.idledisable", "Desactivar Reposo CPU (IDLEDISABLE)", "Desactiva reposo en el perfil AC del plan activo. Puede aumentar consumo y temperatura; no garantiza frecuencia fija.", "CPU", true, true, true),
-        ["tweak.cpu.powerthrottling_off"] = new("tweak.cpu.powerthrottling_off", "Desactivar Power Throttling", "Evita que Windows limite la frecuencia bajo picos de carga.", "CPU", true, true, true),
-        ["tweak.cpu.win32priority"] = new("tweak.cpu.win32priority", "Win32PrioritySeparation a 38", "Prioridad máxima inmediata para la ventana en primer plano de CS2.", "CPU", true, true, true),
-        ["tweak.gpu.mpo_fix"] = new("tweak.gpu.mpo_fix", "Desactivar Multi-Plane Overlay (MPO)", "Corrige micro-tirones y parpadeos en gráficos Intel.", "GPU", true, true, true),
+        ["tweak.cpu.powerthrottling_off"] = new("tweak.cpu.powerthrottling_off", "Desactivar Power Throttling", "Escribe PowerThrottlingOff=1 con respaldo. No garantiza frecuencia fija ni mejora de rendimiento.", "CPU", true, true, true),
+        ["tweak.cpu.win32priority"] = new("tweak.cpu.win32priority", "Win32PrioritySeparation a 38", "Modifica Win32PrioritySeparation globalmente a 38; no es prioridad exclusiva de CS2. Medir antes de conservar.", "CPU", true, true, true),
+        ["tweak.gpu.mpo_fix"] = new("tweak.gpu.mpo_fix", "Desactivar Multi-Plane Overlay (MPO)", "Desactiva MPO mediante OverlayTestMode=5. Usar para probar una incidencia concreta; puede no ayudar.", "GPU", true, true, true),
         ["tweak.gpu.hags"] = new("tweak.gpu.hags", "HAGS HwSchMode = 2", "Aceleración por hardware del programador de GPU.", "GPU", true, true, true),
         ["tweak.gpu.tdr_delay"] = new("tweak.gpu.tdr_delay", "TdrDelay a 10", "Aumenta la tolerancia de tiempo de recuperación del driver gráfico.", "GPU", true, true, true),
         ["tweak.network.nagle_off"] = new("tweak.network.nagle_off", "Desactivar Algoritmo de Nagle", "Transmisión instantánea de paquetes de red sin retraso de 40ms.", "Red", true, true, true),
@@ -151,7 +152,11 @@ public class OptimizationService : IOptimizationService
     {
         return Task.FromResult<IReadOnlyList<OperationCatalogItem>>(_catalog.Values
             .Select(item => item with { CanRestore = HasVerifiedRestore(item.Id),
-                IsImplemented = item.IsImplemented && !PendingReview.Contains(item.Id) }).ToList());
+                IsImplemented = item.IsImplemented && !PendingReview.Contains(item.Id),
+                IsReadOnly = item.Id is "system.hardware.refresh" or "system.processes.list" or "gaming.cs2.detect" or "cortex.mode.watchdog" or "cortex.mode.bench" or "telemetry.realtime",
+                RequiresRestart = item.Id.StartsWith("tweak.gpu.") || item.Id is "cortex.mode.gpu" or "tweak.cpu.win32priority" or "tweak.cpu.powerthrottling_off",
+                AvailabilityReason = PendingReview.Contains(item.Id) ? "Sin implementación verificable/reversión en este motor, o reemplazado por un flujo específico. No ejecutar scripts heredados como sustituto." : null,
+                RequiresElevation = item.RequiresElevation || item.Id is "cortex.mode.gpu" or "cortex.mode.extreme_v2" or "cortex.mode.iniciar_todo" }).ToList());
     }
 
     private bool HasVerifiedRestore(string id) => Presets.ContainsKey(id) || RegistryOperations.Supports(id) || PowerOperations.Supports(id) || TuningOperations.Supports(id)
@@ -189,7 +194,7 @@ public class OptimizationService : IOptimizationService
         {
             if (PendingReview.Contains(operationId)) throw new NotSupportedException("Módulo deshabilitado hasta completar implementación verificable y restauración real.");
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("El motor de optimización requiere Windows.");
-            if (_catalog.TryGetValue(operationId, out var entry) && entry.RequiresElevation && !_securityService.IsElevated())
+            if (_catalog.TryGetValue(operationId, out var entry) && (entry.RequiresElevation || operationId is "cortex.mode.gpu" or "cortex.mode.extreme_v2" or "cortex.mode.iniciar_todo") && !_securityService.IsElevated())
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
             OperationResult result = Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, false)
                 : GameOperations.Supports(operationId) ? await GameOperations.ExecuteAsync(operationId, false)
@@ -202,6 +207,7 @@ public class OptimizationService : IOptimizationService
                 // Diagnóstico y Telemetría
                 "system.hardware.refresh" => await ExecuteHardwareRefreshAsync(logs, sw),
                 "system.processes.list" => await ExecuteProcessesListAsync(logs, sw),
+                "telemetry.realtime" => await ExecuteTelemetryReadAsync(logs, sw),
                 "system.temp.cleanup" or "cortex.mode.cleanup" => await ExecuteTempCleanupAsync(logs, sw),
 
                 // CS2 Gaming
@@ -297,7 +303,7 @@ public class OptimizationService : IOptimizationService
         {
             if (PendingReview.Contains(operationId)) throw new NotSupportedException("Módulo deshabilitado hasta completar implementación verificable y restauración real.");
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("El motor de optimización requiere Windows.");
-            if (_catalog.TryGetValue(operationId, out var entry) && entry.RequiresElevation && !_securityService.IsElevated())
+            if (_catalog.TryGetValue(operationId, out var entry) && (entry.RequiresElevation || operationId is "cortex.mode.gpu" or "cortex.mode.extreme_v2" or "cortex.mode.iniciar_todo") && !_securityService.IsElevated())
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
             OperationResult result = Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, true)
                 : GameOperations.Supports(operationId) ? await GameOperations.ExecuteAsync(operationId, true)
@@ -343,6 +349,22 @@ public class OptimizationService : IOptimizationService
             RecordHistory(operationId, "restore", false, sw.Elapsed.TotalMilliseconds, "Excepción en restauración", ex.Message);
             return failResult;
         }
+    }
+
+    public async Task<OperationResult> RestoreVerifiedAsync()
+    {
+        var timer = Stopwatch.StartNew();
+        // Canonical IDs only, never legacy guessed snapshots. Plan restored last.
+        string[] ids = ["gaming.cs2.priority", "tweak.services.gaming_toggle", "tweak.memory.pagecombining_off",
+            "cortex.mode.torneo", "tweak.gpu.mpo_fix", "tweak.gpu.hags", "tweak.gpu.tdr_delay",
+            "tweak.cpu.powerthrottling_off", "tweak.cpu.win32priority", "tweak.cpu.idledisable", "cortex.mode.nucleo"];
+        var results = new List<OperationResult>();
+        foreach (var id in ids)
+            if ((await GetOperationStatusAsync(id)).HasBackup) results.Add(await RestoreOperationAsync(id));
+        var success = results.All(r => r.Success);
+        return new(success, "restore.verified", "restore", DateTime.UtcNow, timer.Elapsed.TotalMilliseconds,
+            results.Count == 0 ? ["No se encontraron respaldos verificados; no se modificó Windows."] : results.SelectMany(r => r.Logs).ToList(),
+            null, new { Steps = results }, success ? null : "Restauración parcial: revisa los pasos. No se borran respaldos fallidos.", success);
     }
 
     public Task<IReadOnlyList<OperationHistoryItem>> GetHistoryAsync()
@@ -475,6 +497,13 @@ public class OptimizationService : IOptimizationService
         );
 
         return Task.FromResult(data);
+    }
+
+    private async Task<OperationResult> ExecuteTelemetryReadAsync(List<string> logs, Stopwatch sw)
+    {
+        var data = await GetRealtimeTelemetryAsync();
+        logs.Add(data.TelemetrySource);
+        return new(true, "telemetry.realtime", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, data, null, false);
     }
 
     #region Implementaciones Detalladas

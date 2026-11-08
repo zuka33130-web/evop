@@ -10,9 +10,22 @@ public interface IGameProcess : IDisposable
     void SetPriority(ProcessPriorityClass priority);
     void SetAffinity(long mask);
 }
-public interface IGameProcessProvider { IGameProcess OpenCs2(); }
+public interface IGameProcessProvider
+{
+    IGameProcess OpenCs2();
+    bool OriginalAlive(GameProcessState original) => true; // Unknown providers fail closed.
+}
 public sealed class WindowsGameProcessProvider : IGameProcessProvider
 {
+    public bool OriginalAlive(GameProcessState original)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(original.Pid);
+            return !process.HasExited && process.StartTime.ToUniversalTime().Ticks == original.StartedUtcTicks;
+        }
+        catch (ArgumentException) { return false; } // PID no longer exists.
+    }
     public IGameProcess OpenCs2()
     {
         var processes = Process.GetProcessesByName("cs2");
@@ -117,4 +130,20 @@ public sealed class GameOptimizationService(IBackupManager backups, IGameProcess
         }
         finally { Gate.Release(); }
     }
+    public async Task<string> RetireExpiredAsync()
+    {
+        await Gate.WaitAsync();
+        try
+        {
+            var snapshot = await backups.GetLastStateAsync<Snapshot>(BackupKey) ?? throw new IOException("No hay respaldo legible.");
+            if (snapshot.Version != 1 || snapshot.Original is null || snapshot.Original.Name != "cs2" || snapshot.Original.Pid <= 0)
+                throw new IOException("Respaldo no válido; no se descarta.");
+            if (processes.OriginalAlive(snapshot.Original)) throw new InvalidOperationException("La instancia original sigue activa o no se pudo verificar su cierre. Usa Restaurar.");
+            await backups.CreateSnapshotAsync("expired_cs2_" + Guid.NewGuid().ToString("N"), snapshot);
+            await backups.ClearBackupAsync(BackupKey);
+            return "Respaldo de instancia terminada archivado. No se modificó ningún proceso; prioridad/afinidad no persisten cuando termina la instancia.";
+        }
+        finally { Gate.Release(); }
+    }
+
 }

@@ -11,3 +11,7 @@ coverage/
 **/bin/
 **/obj/
 dist-native/
+
+# Browser test output
+playwright-report/
+test-results/

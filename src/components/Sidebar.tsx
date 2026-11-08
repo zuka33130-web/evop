@@ -30,51 +30,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const menuItems = [
-    { id: 'advisor', label: 'Auditor local', sublabel: 'Hardware, software y recomendaciones', icon: Server, badge: 'Local' },
-    { id: 'stability', label: 'Estabilidad y 1% Low', sublabel: 'Capturas reales y comparación', icon: Crosshair, badge: 'Medido' },
-    { id: 'native-operations', label: 'Operaciones Windows', sublabel: 'Catálogo real y restauración', icon: Server, badge: 'Nativo' },
-    {
-      id: 'dashboard',
-      label: 'Panel de Control',
-      sublabel: 'Dashboard general del hardware',
-      icon: LayoutDashboard,
-      badge: 'i3-1220P'
-    },
-    {
-      id: 'optimization',
-      label: 'Centro de Optimización',
-      sublabel: 'Plantillas 1-Click & Tweaks',
-      icon: Zap,
-      badge: '110 Tweaks'
-    },
-    {
-      id: 'cleaner',
-      label: 'Limpieza inteligente',
-      sublabel: 'Vista previa, cuarentena y restauración',
-      icon: Trash2,
-      badge: 'EvoClean'
-    },
-    {
-      id: 'presentmon',
-      label: 'Laboratorio PresentMon',
-      sublabel: 'Telemetría empírica de frametimes',
-      icon: Crosshair,
-      badge: 'Empírico'
-    },
-    {
-      id: 'console',
-      label: 'Consola de Ejecución',
-      sublabel: 'Logs del motor C# / DOS',
-      icon: Terminal,
-      badge: 'Kernel/OS'
-    },
-    {
-      id: 'knowledge',
-      label: 'Base de Conocimiento',
-      sublabel: 'Mitos desmentidos con ciencia',
-      icon: BookOpen,
-      badge: 'Forense'
-    }
+    { id: 'dashboard', label: 'Panel de control', sublabel: 'Datos detectados y flujo recomendado', icon: LayoutDashboard, badge: '' },
+    { id: 'advisor', label: 'Auditor local', sublabel: 'Hardware, software y recomendaciones', icon: Server, badge: '' },
+    { id: 'native-operations', label: 'Operaciones Windows', sublabel: 'Catálogo, permisos y respaldos', icon: Zap, badge: '' },
+    { id: 'stability', label: 'Estabilidad y 1% Low', sublabel: 'Capturas reales y comparación A/B', icon: Crosshair, badge: '' },
+    { id: 'cleaner', label: 'Limpieza inteligente', sublabel: 'Vista previa, cuarentena y restauración', icon: Trash2, badge: '' },
+    { id: 'diagnostics', label: 'Diagnóstico', sublabel: 'Hardware y conexión del motor', icon: Server, badge: '' },
+    { id: 'history', label: 'Historial', sublabel: 'Resultados de aplicación y restauración', icon: Terminal, badge: '' },
+    { id: 'knowledge', label: 'Fuentes y herramientas', sublabel: 'Documentación y configuración oficial', icon: BookOpen, badge: '' }
   ];
 
   const handleNavClick = (id: string) => {
@@ -131,7 +94,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
               </div>
               <div className="text-[11px] text-neutral-400 font-mono">
-                ASUS PN64 · CS2 Booster
+                Windows · Medición y recuperación
               </div>
             </div>
           </div>
@@ -221,7 +184,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           <div className="text-center text-[10px] text-neutral-500 font-mono pt-1">
-            RYZER CORTEX ULTRA · EvoClean & PresentMon
+            EVO Optimizer · C#/.NET 8 + React
           </div>
         </div>
       </aside>

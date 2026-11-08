@@ -343,6 +343,13 @@ app.MapGet("/api/advisor/audit", async (LocalAuditAdvisor advisor) =>
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 
+app.MapPost("/api/recovery/verified", async (IOptimizationService operations) => Results.Ok(await operations.RestoreVerifiedAsync()));
+app.MapPost("/api/recovery/cs2-expired", async (IBackupManager backups) =>
+{
+    try { return Results.Ok(new { message = await new GameOptimizationService(backups, new WindowsGameProcessProvider()).RetireExpiredAsync() }); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
 // Endpoint raíz informativo en modo API; en escritorio se sirve React desde wwwroot.
 if (!hasFrontend) app.MapGet("/", () => Results.Json(new
 {

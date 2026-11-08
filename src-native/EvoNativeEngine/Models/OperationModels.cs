@@ -12,7 +12,10 @@ public record OperationCatalogItem(
     bool CanRestore,
     bool IsImplemented,
     bool RequiresConfirmation = false,
-    string? ConfirmationMessage = null
+    string? ConfirmationMessage = null,
+    bool IsReadOnly = false,
+    bool RequiresRestart = false,
+    string? AvailabilityReason = null
 );
 
 public record OperationResult(

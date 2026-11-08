@@ -130,6 +130,7 @@ public class BackupManager : IBackupManager
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "No se pudo eliminar archivo de respaldo {Path}", path);
+                throw;
             }
         }
         return Task.CompletedTask;

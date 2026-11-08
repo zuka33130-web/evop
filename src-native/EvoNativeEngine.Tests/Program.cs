@@ -201,6 +201,16 @@ Assert(advice.Any(a => a.Id == "memory-pressure") && advice.Any(a => a.Id.Starts
 Assert(advice.Any(a => a.OperationId == "gaming.cs2.priority" && a.RequiresAbTest), "Never advertise priority as a proven win");
 Console.WriteLine("PASS: path boundaries, real quarantine/restore/purge fixtures, stale preview checks and evidence-based local recommendations.");
 
+Assert((await gaming.ExecuteAsync("gaming.cs2.priority", false)).Success, "Prepare stale session test");
+var refusedActive = false;
+try { await gaming.RetireExpiredAsync(); } catch (InvalidOperationException) { refusedActive = true; }
+Assert(refusedActive && gameBackups.HasBackup(GameOptimizationService.BackupKey), "Cannot discard backup for a living game instance");
+gameProvider.Alive = false;
+var priorState = gameProvider.State;
+await gaming.RetireExpiredAsync();
+Assert(!gameBackups.HasBackup(GameOptimizationService.BackupKey) && gameBackups.Archives > 0 && priorState == gameProvider.State, "Archive expired snapshot without modifying a new process");
+Console.WriteLine("PASS: expired game recovery keeps archives and refuses active-instance discard.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();
@@ -219,7 +229,8 @@ sealed class MemoryBackups : IBackupManager
 {
     readonly Dictionary<string, string> values = new();
     public string BackupDirectory => "memory";
-    public Task<string> CreateSnapshotAsync(string name, object data) => throw new NotSupportedException();
+    public int Archives;
+    public Task<string> CreateSnapshotAsync(string name, object data) { Archives++; return Task.FromResult(name); }
     public Task<T?> ReadSnapshotAsync<T>(string path) => throw new NotSupportedException();
     public Task SaveStateAsync<T>(string id, T state) { values[id] = JsonSerializer.Serialize(state); return Task.CompletedTask; }
     public Task<T?> GetLastStateAsync<T>(string id) => Task.FromResult(values.TryGetValue(id, out var json) ? JsonSerializer.Deserialize<T>(json) : default);
@@ -246,6 +257,8 @@ sealed class FakeGameProvider : IGameProcessProvider, IGameProcess
 {
     public GameProcessState State = new(42, 1234567, "cs2", System.Diagnostics.ProcessPriorityClass.Normal, 255);
     public bool IgnoreWrites;
+    public bool Alive = true;
+    public bool OriginalAlive(GameProcessState original) => Alive;
     public IGameProcess OpenCs2() => this;
     public GameProcessState Read() => State;
     public void SetPriority(System.Diagnostics.ProcessPriorityClass priority) { if (!IgnoreWrites) State = State with { Priority = priority }; }

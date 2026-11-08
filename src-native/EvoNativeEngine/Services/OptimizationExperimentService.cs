@@ -120,6 +120,12 @@ public sealed class OptimizationExperimentService(BenchmarkSessionService sessio
         try
         {
             if (active is null || active.Id != id) throw new ArgumentException("Experimento desconocido.");
+            if (!(await operations.GetOperationStatusAsync(active.OperationId)).HasBackup)
+            {
+                active = null;
+                return new(true, "experiment.close", "restore", DateTime.UtcNow, 0,
+                    ["No hay respaldo del módulo: el experimento se cierra sin modificar Windows. No se certifica una restauración externa."], null, null, null, false);
+            }
             var result = await operations.RestoreOperationAsync(active.OperationId);
             if (result.Success) active = null;
             return result;
