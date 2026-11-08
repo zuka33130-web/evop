@@ -11,6 +11,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+// Hold an exclusive file handle for the full process lifetime. Even with a custom
+// port, a second engine for this user must not race on the same snapshot files.
+var stateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EvoOptimizer");
+Directory.CreateDirectory(stateDirectory);
+using var instanceLock = new FileStream(Path.Combine(stateDirectory, "engine.lock"),
+    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Configuración de Kestrel: enlace estricto y exclusivo a Loopback (127.0.0.1)

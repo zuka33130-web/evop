@@ -28,6 +28,8 @@ public class OptimizationService : IOptimizationService
     private readonly IBackupManager _backupManager;
     private readonly IDiagnosticsService _diagnosticsService;
 
+    private WindowsTuningService TuningOperations => new(_backupManager, new WindowsTuning());
+
     private PowerOptimizationService PowerOperations => new(_backupManager, new WindowsPowerSettings());
 
     private RegistryOptimizationService RegistryOperations => new(_backupManager, _securityService);
@@ -55,10 +57,10 @@ public class OptimizationService : IOptimizationService
         ["cortex.mode.nucleo"] = new("cortex.mode.nucleo", "Plan de Alto Rendimiento", "Activa el plan de Alto Rendimiento existente y respalda el GUID original. No modifica BCD ni TRIM.", "Cortex", true, true, true),
         ["cortex.mode.timers"] = new("cortex.mode.timers", "Fix Timers TSC (Anti-HPET lento)", "Elimina temporizadores lentos y activa TSC nativo a 4GHz sin jitter.", "Cortex", true, true, true),
         ["cortex.mode.gpu"] = new("cortex.mode.gpu", "Boost Intel UHD + MPO Fix", "Configura OverlayTestMode=5 para evitar parpadeos y asegura HAGS activo.", "Cortex", false, true, true),
-        ["cortex.mode.stutter"] = new("cortex.mode.stutter", "Fix Stutter RAM Definitivo", "Detiene SysMain redundante en SSD NVMe y purga memoria en espera.", "Cortex", true, true, true),
+        ["cortex.mode.stutter"] = new("cortex.mode.stutter", "Fix Stutter RAM Definitivo", "Desactiva PageCombining mediante MMAgent, guardando el valor original. No purga RAM ni detiene SysMain.", "Cortex", true, true, true),
         ["cortex.mode.network"] = new("cortex.mode.network", "Red Competitiva + Nagle OFF", "Establece TcpAckFrequency=1 y TCPNoDelay=1 en las interfaces activas.", "Cortex", true, true, true),
-        ["cortex.mode.debloat"] = new("cortex.mode.debloat", "Debloat Quirúrgico Seguro", "Detiene servicios de telemetría sin deshabilitar Windows Defender ni Store.", "Cortex", true, true, true),
-        ["cortex.mode.services"] = new("cortex.mode.services", "Servicios Gaming Switcher", "Suspende servicios no esenciales (Spooler, Maps, DiagTrack) con respaldo total.", "Cortex", true, true, true),
+        ["cortex.mode.debloat"] = new("cortex.mode.debloat", "Debloat Quirúrgico Seguro", "Detiene DiagTrack y MapsBroker de forma reversible. No desinstala aplicaciones ni modifica seguridad.", "Cortex", true, true, true),
+        ["cortex.mode.services"] = new("cortex.mode.services", "Servicios Gaming Switcher", "Detiene únicamente DiagTrack y MapsBroker si existen, conservando su estado real. No cambia el inicio automático.", "Cortex", true, true, true),
         ["cortex.mode.vbs"] = new("cortex.mode.vbs", "VBS / HVCI Toggle", "Ajusta aislamiento de virtualización de memoria. Requiere confirmación y reinicio.", "Cortex", true, true, true, true, "Modificar VBS/HVCI puede requerir reiniciar Windows. ¿Confirmar acción?"),
         ["cortex.mode.cleanup"] = new("cortex.mode.cleanup", "Limpieza Total NVMe + Cachés", "Purga archivos temporales seguros y limpia cachés de DirectX/Steam.", "Cortex", false, false, true),
         ["cortex.mode.watchdog"] = new("cortex.mode.watchdog", "Watchdog Loop CS2 (Afinidad P-Cores)", "Verifica continuamente cs2.exe y reafirma los núcleos 0-3 si Windows intenta moverlo.", "Cortex", false, false, true),
@@ -85,9 +87,9 @@ public class OptimizationService : IOptimizationService
         ["tweak.services.gaming_toggle"] = new("tweak.services.gaming_toggle", "Alternar Servicios Gaming", "Detiene servicios secundarios de diagnóstico y mapas durante la sesión.", "Servicios", true, true, true),
 
         // 5. Orquestadores Ultra & God Mode
-        ["cortex.mode.iniciar_todo"] = new("cortex.mode.iniciar_todo", "INICIAR_TODO_V3 (Suite Completa)", "Orquesta en secuencia segura los módulos del sistema con punto de restauración.", "Orquestador", true, true, true, true, "¿Deseas ejecutar la suite de optimización completa con creación de punto de restauración?"),
-        ["cortex.mode.auto_pre_game"] = new("cortex.mode.auto_pre_game", "24_AUTO_PRE_GAME (Lanzador Rápido)", "Cierra procesos secundarios, purga RAM y lanza CS2 con parámetros Pro.", "Orquestador", false, true, true),
-        ["cortex.mode.extreme_v2"] = new("cortex.mode.extreme_v2", "EXTREME_v2 (Modo Extremo)", "Aplica los 10 tweaks extremos de latencia de kernel y CPU.", "Orquestador", true, true, true),
+        ["cortex.mode.iniciar_todo"] = new("cortex.mode.iniciar_todo", "INICIAR_TODO_V3 (Suite Completa)", "Aplica plan de energía, PowerThrottling y transparencias con respaldos individuales. No crea un punto de restauración Windows.", "Orquestador", true, true, true, true, "¿Aplicar los tres módulos con respaldo individual? No se crea un punto de restauración Windows."),
+        ["cortex.mode.auto_pre_game"] = new("cortex.mode.auto_pre_game", "24_AUTO_PRE_GAME (Lanzador Rápido)", "Ajusta transparencias y prioridad de CS2 ya iniciado. No purga RAM ni lanza el juego.", "Orquestador", false, true, true),
+        ["cortex.mode.extreme_v2"] = new("cortex.mode.extreme_v2", "EXTREME_v2 (Modo Extremo)", "Aplica IDLEDISABLE AC, PowerThrottling, prioridad de ventana y MPO con respaldo individual.", "Orquestador", true, true, true),
         ["cortex.mode.extreme_undo"] = new("cortex.mode.extreme_undo", "EXTREME_Undo (Revertir Extremo)", "Revierte todos los cambios de Fase 2 al estado original.", "Orquestador", true, false, true),
         ["cortex.mode.god_mode"] = new("cortex.mode.god_mode", "GOD_MODE (Telemetría y Clamp)", "Supervisión activa con control térmico y telemetría de solo lectura.", "Orquestador", false, false, true)
     };
@@ -104,13 +106,51 @@ public class OptimizationService : IOptimizationService
         _diagnosticsService = diagnosticsService;
     }
 
+    // Do not expose legacy executors with guessed snapshots or misleading scope.
+    private static readonly HashSet<string> PendingReview = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cortex.mode.timers", "cortex.mode.network", "cortex.mode.vbs",
+        "tweak.network.nagle_off", "tweak.network.autotuning_high", "tweak.memory.pagefile_fixed",
+        "tweak.disk.trim_nvme", "tweak.disk.disablelastaccess", "tweak.security.defender_exclusions",
+        "tweak.services.update_pause", "cortex.mode.restore", "cortex.mode.extreme_undo"
+    };
+    private static readonly Dictionary<string, string[]> Presets = new()
+    {
+        ["cortex.mode.gpu"] = ["tweak.gpu.mpo_fix", "tweak.gpu.hags", "tweak.gpu.tdr_delay"],
+        ["cortex.mode.extreme_v2"] = ["tweak.cpu.idledisable", "tweak.cpu.powerthrottling_off", "tweak.cpu.win32priority", "tweak.gpu.mpo_fix"],
+        ["cortex.mode.iniciar_todo"] = ["cortex.mode.nucleo", "tweak.cpu.powerthrottling_off", "cortex.mode.torneo"],
+        ["cortex.mode.auto_pre_game"] = ["cortex.mode.torneo", "gaming.cs2.priority"]
+    };
+
+    private async Task<OperationResult> ExecutePresetAsync(string id, bool restore)
+    {
+        var timer = Stopwatch.StartNew();
+        var results = new List<OperationResult>();
+        var children = restore ? Presets[id].Reverse() : Presets[id].AsEnumerable();
+        foreach (var child in children)
+        {
+            if (restore && !(await GetOperationStatusAsync(child)).HasBackup) continue;
+            var result = restore ? await RestoreOperationAsync(child) : await ApplyOperationAsync(child);
+            results.Add(result);
+            // Apply stops on first failure. Restore attempts every backed-up child.
+            if (!result.Success && !restore) break;
+        }
+        var success = results.Count > 0 && results.All(r => r.Success);
+        return new(success, id, restore ? "restore" : "apply", DateTime.UtcNow,
+            timer.Elapsed.TotalMilliseconds, results.SelectMany(r => r.Logs).ToList(), null,
+            new { Steps = results, PartialChangesPossible = !success },
+            success ? null : "Secuencia incompleta. Consulta los pasos; restaura los módulos con respaldo. No se realizó rollback automático.",
+            restore && success);
+    }
+
     public Task<IReadOnlyList<OperationCatalogItem>> GetCatalogAsync()
     {
         return Task.FromResult<IReadOnlyList<OperationCatalogItem>>(_catalog.Values
-            .Select(item => item with { CanRestore = HasVerifiedRestore(item.Id) }).ToList());
+            .Select(item => item with { CanRestore = HasVerifiedRestore(item.Id),
+                IsImplemented = item.IsImplemented && !PendingReview.Contains(item.Id) }).ToList());
     }
 
-    private bool HasVerifiedRestore(string id) => RegistryOperations.Supports(id) || PowerOperations.Supports(id)
+    private bool HasVerifiedRestore(string id) => Presets.ContainsKey(id) || RegistryOperations.Supports(id) || PowerOperations.Supports(id) || TuningOperations.Supports(id)
         || id is "gaming.cs2.priority" or "cortex.mode.bestia" or "tweak.cpu.affinity_15";
 
     public async Task<OperationResult> ApplyOperationAsync(string operationId)
@@ -142,11 +182,14 @@ public class OptimizationService : IOptimizationService
 
         try
         {
+            if (PendingReview.Contains(operationId)) throw new NotSupportedException("Módulo deshabilitado hasta completar implementación verificable y restauración real.");
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("El motor de optimización requiere Windows.");
             if (_catalog.TryGetValue(operationId, out var entry) && entry.RequiresElevation && !_securityService.IsElevated())
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
-            OperationResult result = RegistryOperations.Supports(operationId)
+            OperationResult result = Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, false)
+                : RegistryOperations.Supports(operationId)
                 ? await RegistryOperations.ExecuteAsync(operationId, false)
+                : TuningOperations.Supports(operationId) ? await TuningOperations.ExecuteAsync(operationId, false)
                 : PowerOperations.Supports(operationId) ? await PowerOperations.ExecuteAsync(operationId, false)
                 : operationId switch
             {
@@ -245,11 +288,14 @@ public class OptimizationService : IOptimizationService
 
         try
         {
+            if (PendingReview.Contains(operationId)) throw new NotSupportedException("Módulo deshabilitado hasta completar implementación verificable y restauración real.");
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("El motor de optimización requiere Windows.");
             if (_catalog.TryGetValue(operationId, out var entry) && entry.RequiresElevation && !_securityService.IsElevated())
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
-            OperationResult result = RegistryOperations.Supports(operationId)
+            OperationResult result = Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, true)
+                : RegistryOperations.Supports(operationId)
                 ? await RegistryOperations.ExecuteAsync(operationId, true)
+                : TuningOperations.Supports(operationId) ? await TuningOperations.ExecuteAsync(operationId, true)
                 : PowerOperations.Supports(operationId) ? await PowerOperations.ExecuteAsync(operationId, true)
                 : operationId switch
             {
@@ -297,13 +343,20 @@ public class OptimizationService : IOptimizationService
         return Task.FromResult<IReadOnlyList<OperationHistoryItem>>(list);
     }
 
-    public Task<OperationStatusResponse> GetOperationStatusAsync(string operationId)
+    public async Task<OperationStatusResponse> GetOperationStatusAsync(string operationId)
     {
-        bool isImplemented = _catalog.TryGetValue(operationId, out var item) && item.IsImplemented;
+        bool isImplemented = _catalog.TryGetValue(operationId, out var item) && item.IsImplemented && !PendingReview.Contains(operationId);
         bool canRestore = isImplemented && HasVerifiedRestore(operationId);
         bool hasBackup = _backupManager.HasBackup(
+            TuningOperations.Supports(operationId) ? $"verified.v1.{TuningOperations.CanonicalId(operationId)}" :
             PowerOperations.Supports(operationId) || RegistryOperations.Supports(operationId)
                 ? $"verified.v1.{operationId}" : operationId);
+
+        if (Presets.TryGetValue(operationId, out var children))
+        {
+            var states = await Task.WhenAll(children.Select(GetOperationStatusAsync));
+            hasBackup = states.Any(state => state.HasBackup);
+        }
 
         var lastRun = _history.Where(h => h.OperationId.Equals(operationId, StringComparison.OrdinalIgnoreCase))
                               .OrderByDescending(h => h.TimestampUtc)
@@ -319,7 +372,7 @@ public class OptimizationService : IOptimizationService
             message = cs2State.IsRunning ? $"cs2.exe activo (PID {cs2State.ProcessId}, Prioridad {cs2State.PriorityClass})" : "CS2 no está en ejecución.";
         }
 
-        return Task.FromResult(new OperationStatusResponse(
+        return new OperationStatusResponse(
             OperationId: operationId,
             IsImplemented: isImplemented,
             CanRestore: canRestore,
@@ -327,7 +380,7 @@ public class OptimizationService : IOptimizationService
             LastRunUtc: lastRun?.TimestampUtc,
             CurrentState: currentState,
             Message: message
-        ));
+        );
     }
 
     public Task<RealtimeTelemetryData> GetRealtimeTelemetryAsync()

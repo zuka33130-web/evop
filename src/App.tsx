@@ -72,13 +72,20 @@ export default function App() {
     }
 
     setIsLaunchingCs2(true);
-    setCs2LaunchStatus('Aplicando afinidad P-Cores y prioridad Alta...');
+    setCs2LaunchStatus('Solicitando inicio de CS2 a Steam...');
 
     try {
-      await applyOp('cortex.mode.bestia');
-      setCs2LaunchStatus('Solicitando inicio de CS2 a Steam...');
-      const res = await applyOp('gaming.cs2.launch');
-      setCs2LaunchStatus(res.success ? '✓ CS2 lanzado con éxito y afinidad verificada.' : (res.errorMessage || 'CS2 en ejecución'));
+      const launch = await applyOp('gaming.cs2.launch');
+      if (!launch.success) throw new Error(launch.errorMessage || 'No se pudo solicitar el inicio de CS2.');
+      if (!launch.currentState?.isRunning) {
+        setCs2LaunchStatus('Steam recibió la solicitud. Cuando CS2 esté abierto, aplica la optimización desde la consola.');
+        return;
+      }
+      setCs2LaunchStatus('CS2 detectado. Aplicando prioridad y afinidad...');
+      const optimized = await applyOp('gaming.cs2.priority');
+      setCs2LaunchStatus(optimized.success
+        ? '✓ CS2 detectado; prioridad y afinidad verificadas por el motor.'
+        : `CS2 iniciado, pero la optimización falló: ${optimized.errorMessage || 'consulta el historial'}`);
     } catch (err: any) {
       setCs2LaunchStatus(`Aviso: ${err.message}`);
     } finally {

@@ -48,3 +48,14 @@ Validación local: `npm run lint` pasa. No hay SDK .NET ni Windows en el entorno
 - Catálogo/estado solo anuncian restauración para los caminos de registro, energía y prioridad CS2 con restauración dedicada. Esto no certifica los ejecutores antiguos de aplicación.
 
 El workflow ejecuta también `src-native/EvoNativeEngine.Tests`, un arnés sin paquetes de test que utiliza un adaptador de energía falso. Cubre aplicar/reaplicar/restaurar, respaldo ausente, cambio de plan, fallo de lectura posterior y conservación del backup, reintento y error de API. Estas pruebas no tocan registro ni energía del runner. La integración real sigue requiriendo Windows de prueba.
+
+## Tercera etapa: memoria, servicios y presets
+
+- `tweak.memory.pagecombining_off` / `cortex.mode.stutter`: leen `Get-MMAgent.PageCombining`, ejecutan Enable/Disable-MMAgent con scripts fijos y vuelven a leer. El respaldo real se comparte entre alias. No se purga memoria ni se modifica SysMain.
+- `tweak.services.gaming_toggle`, `cortex.mode.services` y `cortex.mode.debloat`: solo DiagTrack y MapsBroker. Se guarda qué servicios existen y si estaban activos. Restaurar no arranca servicios originalmente detenidos. No cambia el tipo de inicio ni fuerza la detención de dependientes. Ante fallo parcial se conserva el respaldo y se informa error.
+- Los presets GPU, EXTREME_v2, INICIAR_TODO y AUTO_PRE_GAME pasan por los ejecutores verificados individuales. Aplicar se detiene al primer fallo; restaurar recorre los módulos con respaldo en orden inverso. El resultado incluye los pasos y advierte cambios parciales. No hay rollback transaccional automático. La restauración de un preset usa los backups de sus módulos, que pueden haberse aplicado individualmente: no representa una sesión aislada.
+- Se bloquean explícitamente los ejecutores heredados de timers, VBS, red, pagefile, disco, exclusiones Defender, pausa Update y restauración global hasta tener una implementación con alcance y reversión correctos. El catálogo los marca no implementados. No se rebaja la seguridad como parte de una suite de rendimiento.
+- El proceso mantiene un archivo de bloqueo exclusivo por usuario para evitar dos instancias que compitan por los mismos respaldos.
+- El botón de inicio de CS2 ahora espera confirmación del proceso antes de aplicar prioridad/afinidad. Una solicitud a Steam pendiente no se presenta como optimización verificada.
+
+Las pruebas de memoria/servicios usan un adaptador falso, incluyendo alias, aplicación repetida, servicios originalmente detenidos, fallo parcial y recuperación. No certifican el acceso a servicios ni MMAgent en hardware real. Probar en una VM Windows antes de uso habitual.

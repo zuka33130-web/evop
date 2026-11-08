@@ -34,6 +34,30 @@ Assert(!(await engine.ExecuteAsync("cortex.mode.nucleo", false)).Success, "Unava
 Assert(backups.HasBackup("verified.v1.cortex.mode.nucleo"), "Keep backup on API error");
 Console.WriteLine("PASS: power apply/reapply/restore, missing backup, changed plan, verification failure, retry, API failure.");
 
+var tuningBackups = new MemoryBackups();
+var fakeWindows = new FakeWindowsTuning();
+var tuning = new WindowsTuningService(tuningBackups, fakeWindows);
+Assert((await tuning.ExecuteAsync("cortex.mode.stutter", false)).Success, "Memory apply");
+Assert(!fakeWindows.PageCombining, "Memory actually changed");
+Assert((await tuning.ExecuteAsync("tweak.memory.pagecombining_off", false)).Success, "Alias reapply");
+Assert((await tuning.ExecuteAsync("cortex.mode.stutter", true)).Success && fakeWindows.PageCombining, "Alias restore original");
+Assert(!(await tuning.ExecuteAsync("cortex.mode.stutter", true)).Success, "Memory missing backup");
+Assert((await tuning.ExecuteAsync("cortex.mode.services", false)).Success, "Services apply");
+Assert(!fakeWindows.Services["DiagTrack"] && !fakeWindows.Services["MapsBroker"], "Services stopped");
+Assert((await tuning.ExecuteAsync("cortex.mode.debloat", false)).Success, "Services alias reapply");
+Assert((await tuning.ExecuteAsync("tweak.services.gaming_toggle", true)).Success, "Services restore");
+Assert(fakeWindows.Services["DiagTrack"] && !fakeWindows.Services["MapsBroker"], "Do not start originally stopped services");
+fakeWindows.Services["MapsBroker"] = true;
+fakeWindows.FailService = "MapsBroker";
+Assert(!(await tuning.ExecuteAsync("cortex.mode.services", false)).Success, "Service partial failure reported");
+Assert(tuningBackups.HasBackup("verified.v1.tweak.services.gaming_toggle"), "Partial failure keeps snapshot");
+fakeWindows.FailService = null;
+Assert((await tuning.ExecuteAsync("cortex.mode.services", true)).Success && fakeWindows.Services["DiagTrack"], "Restore after partial failure");
+fakeWindows.IgnoreMemoryWrites = true;
+Assert(!(await tuning.ExecuteAsync("cortex.mode.stutter", false)).Success, "Memory verification fails honestly");
+Assert(tuningBackups.HasBackup("verified.v1.tweak.memory.pagecombining_off"), "Memory snapshot retained");
+Console.WriteLine("PASS: memory and service snapshots, aliases, reapply, original stopped state, partial failure and retry.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();
@@ -58,4 +82,19 @@ sealed class MemoryBackups : IBackupManager
     public Task<T?> GetLastStateAsync<T>(string id) => Task.FromResult(values.TryGetValue(id, out var json) ? JsonSerializer.Deserialize<T>(json) : default);
     public bool HasBackup(string id) => values.ContainsKey(id);
     public Task ClearBackupAsync(string id) { values.Remove(id); return Task.CompletedTask; }
+}
+
+sealed class FakeWindowsTuning : IWindowsTuning
+{
+    public bool PageCombining = true, IgnoreMemoryWrites;
+    public string? FailService;
+    public Dictionary<string, bool> Services = new() { ["DiagTrack"] = true, ["MapsBroker"] = false };
+    public Task<bool> ReadPageCombiningAsync() => Task.FromResult(PageCombining);
+    public Task SetPageCombiningAsync(bool enabled) { if (!IgnoreMemoryWrites) PageCombining = enabled; return Task.CompletedTask; }
+    public bool? ReadService(string name) => Services.TryGetValue(name, out var state) ? state : null;
+    public void SetService(string name, bool running)
+    {
+        if (name == FailService) throw new IOException("Service failure");
+        Services[name] = running;
+    }
 }
