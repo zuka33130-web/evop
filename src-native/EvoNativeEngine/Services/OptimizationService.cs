@@ -28,6 +28,8 @@ public class OptimizationService : IOptimizationService
     private readonly IBackupManager _backupManager;
     private readonly IDiagnosticsService _diagnosticsService;
 
+    private GameOptimizationService GameOperations => new(_backupManager, new WindowsGameProcessProvider());
+
     private WindowsTuningService TuningOperations => new(_backupManager, new WindowsTuning());
 
     private PowerOptimizationService PowerOperations => new(_backupManager, new WindowsPowerSettings());
@@ -52,7 +54,7 @@ public class OptimizationService : IOptimizationService
         ["gaming.cs2.priority.restore"] = new("gaming.cs2.priority.restore", "Restaurar Prioridad Original de CS2", "Restaura la prioridad previa validando la identidad del proceso original.", "Gaming", false, false, true),
 
         // 3. Los 15 Modos Cortex
-        ["cortex.mode.bestia"] = new("cortex.mode.bestia", "Modo Bestia Seguro", "Afinidad a P-Cores 0-3 (mask 15), Prioridad Alta y purga de aplicaciones secundarias.", "Cortex", false, true, true),
+        ["cortex.mode.bestia"] = new("cortex.mode.bestia", "Prioridad de Juego", "Prioridad High para la instancia actual de CS2. Conserva afinidad y aplicaciones secundarias.", "Cortex", false, true, true),
         ["cortex.mode.torneo"] = new("cortex.mode.torneo", "Modo Torneo (Optimización DWM / Shell)", "Ajusta transparencias y composición pesada de ventanas para liberar memoria gráfica.", "Cortex", false, true, true, true, "¿Deseas optimizar la composición visual de Windows para máxima fluidez en CS2?"),
         ["cortex.mode.nucleo"] = new("cortex.mode.nucleo", "Plan de Alto Rendimiento", "Activa el plan de Alto Rendimiento existente y respalda el GUID original. No modifica BCD ni TRIM.", "Cortex", true, true, true),
         ["cortex.mode.timers"] = new("cortex.mode.timers", "Fix Timers TSC (Anti-HPET lento)", "Elimina temporizadores lentos y activa TSC nativo a 4GHz sin jitter.", "Cortex", true, true, true),
@@ -63,13 +65,13 @@ public class OptimizationService : IOptimizationService
         ["cortex.mode.services"] = new("cortex.mode.services", "Servicios Gaming Switcher", "Detiene únicamente DiagTrack y MapsBroker si existen, conservando su estado real. No cambia el inicio automático.", "Cortex", true, true, true),
         ["cortex.mode.vbs"] = new("cortex.mode.vbs", "VBS / HVCI Toggle", "Ajusta aislamiento de virtualización de memoria. Requiere confirmación y reinicio.", "Cortex", true, true, true, true, "Modificar VBS/HVCI puede requerir reiniciar Windows. ¿Confirmar acción?"),
         ["cortex.mode.cleanup"] = new("cortex.mode.cleanup", "Limpieza Total NVMe + Cachés", "Purga archivos temporales seguros y limpia cachés de DirectX/Steam.", "Cortex", false, false, true),
-        ["cortex.mode.watchdog"] = new("cortex.mode.watchdog", "Watchdog Loop CS2 (Afinidad P-Cores)", "Verifica continuamente cs2.exe y reafirma los núcleos 0-3 si Windows intenta moverlo.", "Cortex", false, false, true),
+        ["cortex.mode.watchdog"] = new("cortex.mode.watchdog", "Consultar CS2", "Consulta puntual del proceso sin cambiar prioridad ni afinidad. No instala un watchdog.", "Cortex", false, false, true),
         ["cortex.mode.bench"] = new("cortex.mode.bench", "Benchmark y Diagnóstico en Vivo", "Analiza en tiempo real clocks, RAM, latencia y temperatura física.", "Cortex", false, false, true),
         ["cortex.mode.cfg"] = new("cortex.mode.cfg", "Desplegar CFG y Video.txt", "Genera y despliega autoexec.cfg optimizado en la ruta de CS2.", "Cortex", false, true, true),
         ["cortex.mode.restore"] = new("cortex.mode.restore", "Restaurar Todo al Modo Stock", "Revierte todos los valores modificados a sus snapshots originales de Windows.", "Cortex", false, false, true),
 
         // 4. Tweaks Atómicos
-        ["tweak.cpu.affinity_15"] = new("tweak.cpu.affinity_15", "Afinidad P-Cores 0-3 (Máscara 15)", "Fuerza a cs2.exe a correr en los 4 hilos rápidos de los P-Cores.", "CPU", false, true, true),
+        ["tweak.cpu.affinity_15"] = new("tweak.cpu.affinity_15", "Afinidad explícita 0-3 (Máscara 15)", "Restringe CS2 a los primeros cuatro procesadores lógicos, sin detectar P-Cores. Puede reducir rendimiento.", "CPU", false, true, true, true, "La máscara 15 no garantiza P-Cores y puede empeorar FPS. ¿Aplicar para una prueba A/B?"),
         ["tweak.cpu.idledisable"] = new("tweak.cpu.idledisable", "Desactivar Reposo CPU (IDLEDISABLE)", "Desactiva reposo en el perfil AC del plan activo. Puede aumentar consumo y temperatura; no garantiza frecuencia fija.", "CPU", true, true, true),
         ["tweak.cpu.powerthrottling_off"] = new("tweak.cpu.powerthrottling_off", "Desactivar Power Throttling", "Evita que Windows limite la frecuencia bajo picos de carga.", "CPU", true, true, true),
         ["tweak.cpu.win32priority"] = new("tweak.cpu.win32priority", "Win32PrioritySeparation a 38", "Prioridad máxima inmediata para la ventana en primer plano de CS2.", "CPU", true, true, true),
@@ -187,6 +189,7 @@ public class OptimizationService : IOptimizationService
             if (_catalog.TryGetValue(operationId, out var entry) && entry.RequiresElevation && !_securityService.IsElevated())
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
             OperationResult result = Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, false)
+                : GameOperations.Supports(operationId) ? await GameOperations.ExecuteAsync(operationId, false)
                 : RegistryOperations.Supports(operationId)
                 ? await RegistryOperations.ExecuteAsync(operationId, false)
                 : TuningOperations.Supports(operationId) ? await TuningOperations.ExecuteAsync(operationId, false)
@@ -293,6 +296,7 @@ public class OptimizationService : IOptimizationService
             if (_catalog.TryGetValue(operationId, out var entry) && entry.RequiresElevation && !_securityService.IsElevated())
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
             OperationResult result = Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, true)
+                : GameOperations.Supports(operationId) ? await GameOperations.ExecuteAsync(operationId, true)
                 : RegistryOperations.Supports(operationId)
                 ? await RegistryOperations.ExecuteAsync(operationId, true)
                 : TuningOperations.Supports(operationId) ? await TuningOperations.ExecuteAsync(operationId, true)
@@ -348,6 +352,7 @@ public class OptimizationService : IOptimizationService
         bool isImplemented = _catalog.TryGetValue(operationId, out var item) && item.IsImplemented && !PendingReview.Contains(operationId);
         bool canRestore = isImplemented && HasVerifiedRestore(operationId);
         bool hasBackup = _backupManager.HasBackup(
+            GameOperations.Supports(operationId) ? GameOptimizationService.BackupKey :
             TuningOperations.Supports(operationId) ? $"verified.v1.{TuningOperations.CanonicalId(operationId)}" :
             PowerOperations.Supports(operationId) || RegistryOperations.Supports(operationId)
                 ? $"verified.v1.{operationId}" : operationId);
@@ -389,9 +394,9 @@ public class OptimizationService : IOptimizationService
         string timeStr = now.ToLocalTime().ToString("HH:mm:ss");
 
         // 1. Memoria RAM física real
-        double ramFreeMb = 4096;
-        double ramTotalMb = 16384;
-        double ramUsedPct = 50;
+        double? ramFreeMb = null;
+        double? ramTotalMb = null;
+        double? ramUsedPct = null;
 
         try
         {
@@ -401,16 +406,16 @@ public class OptimizationService : IOptimizationService
             {
                 ramTotalMb = Math.Round(memStatus.ullTotalPhys / (1024.0 * 1024.0), 1);
                 ramFreeMb = Math.Round(memStatus.ullAvailPhys / (1024.0 * 1024.0), 1);
-                ramUsedPct = ramTotalMb > 0 ? Math.Round(((ramTotalMb - ramFreeMb) / ramTotalMb) * 100.0, 1) : 0;
+                ramUsedPct = ramTotalMb > 0 ? Math.Round(((ramTotalMb.Value - ramFreeMb.Value) / ramTotalMb.Value) * 100.0, 1) : 0;
             }
         }
         catch { }
 
         // 2. CPU Usage & Clock
         int cpuCores = Environment.ProcessorCount;
-        double cpuUsage = GetSystemCpuUsage();
-        int maxClockMhz = 4400; // Por defecto Alder Lake Boost Clock
-        int currentClockMhz = 4400;
+        double? cpuUsage = GetSystemCpuUsage();
+        int maxClockMhz = 0;
+        int currentClockMhz = 0;
 
         try
         {
@@ -424,21 +429,12 @@ public class OptimizationService : IOptimizationService
         }
         catch { }
 
-        double clkPct = maxClockMhz > 0 ? Math.Round(((double)currentClockMhz / maxClockMhz) * 100.0, 1) : 100.0;
-        if (clkPct > 105) clkPct = 100;
-
-        // 3. GPU Usage (Real status)
-        double gpuUsage = Math.Min(98.0, Math.Max(12.0, cpuUsage * 1.35));
-
-        // 4. CS2 Process detection
+        double? clkPct = maxClockMhz > 0 && currentClockMhz > 0
+            ? Math.Round((double)currentClockMhz / maxClockMhz * 100.0, 1) : null;
+        // GPU utilization is not derivable from CPU usage. ACPI is not CPU package temperature.
+        double? gpuUsage = null;
         var cs2State = GetCs2CurrentProcessState();
-        if (cs2State.IsRunning)
-        {
-            gpuUsage = Math.Max(gpuUsage, 88.0);
-        }
-
-        // 5. Temperatura física real (o calculada desde carga real de CPU si ACPI es restringido por BIOS)
-        double temp = 52.0 + (cpuUsage * 0.32);
+        double? temp = null;
         try
         {
             using var searcher = new System.Management.ManagementObjectSearcher(@"root\WMI", "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature");
@@ -454,25 +450,22 @@ public class OptimizationService : IOptimizationService
         }
         catch { }
 
-        // 6. Throttling flag derivation
-        string throttling = "NO";
-        if (temp >= 92.0) throttling = "T-THROT";
-        else if (clkPct < 88.0 && cpuUsage > 60.0) throttling = "P-THROT";
-        else if (temp >= 85.0 || clkPct < 95.0) throttling = "MARGINAL";
+        // No hardware limit-reason sensor is available. Never infer thermal/power throttling from a clock ratio.
+        string throttling = "UNKNOWN";
 
         var data = new RealtimeTelemetryData(
             TimestampUtc: now,
             TimeString: timeStr,
-            CpuUsagePct: Math.Round(cpuUsage, 1),
-            CpuClockPct: Math.Round(clkPct, 1),
-            CpuClockMhz: currentClockMhz,
-            GpuUsagePct: Math.Round(gpuUsage, 1),
+            CpuUsagePct: cpuUsage is double usage ? Math.Round(usage, 1) : null,
+            CpuClockPct: clkPct,
+            CpuClockMhz: currentClockMhz > 0 ? currentClockMhz : null,
+            GpuUsagePct: gpuUsage,
             RamFreeMb: ramFreeMb,
             RamTotalMb: ramTotalMb,
             RamUsedPct: ramUsedPct,
-            TemperatureCelsius: Math.Round(temp, 1),
+            TemperatureCelsius: temp,
             ThrottlingStatus: throttling,
-            TelemetrySource: "Hardware Real de Windows 11 (WMI/Win32)",
+            TelemetrySource: "CPU: delta GetSystemTimes; RAM: GlobalMemoryStatusEx; clock: WMI reportado (no reloj efectivo); temperatura: zona ACPI (no paquete CPU); GPU y throttling: no disponibles",
             IsCs2Running: cs2State.IsRunning,
             Cs2ProcessId: cs2State.ProcessId
         );
@@ -633,181 +626,12 @@ public class OptimizationService : IOptimizationService
         }
     }
 
-    // 5. Prioridad y Afinidad de CS2 con Snapshot Persistente y Validación de PID (Requerimiento 5)
-    private async Task<OperationResult> ExecuteCs2PriorityAndAffinityAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[CS2 OPTIMIZACIÓN] Buscando proceso 'cs2.exe' para afinar CPU y quantum...");
-        var procs = Process.GetProcessesByName("cs2");
+    // All callers, including legacy internal paths, use the instance-bound engine.
+    private Task<OperationResult> ExecuteCs2PriorityAndAffinityAsync(List<string> logs, Stopwatch sw) =>
+        GameOperations.ExecuteAsync("gaming.cs2.priority", false);
 
-        if (procs.Length == 0)
-        {
-            sw.Stop();
-            logs.Add("[AVISO] 'cs2.exe' no está ejecutándose en este momento.");
-            logs.Add("[REGLA DE CONGRUENCIA] La prioridad y afinidad se aplican en vivo sobre el proceso activo.");
-            return new OperationResult(false, "gaming.cs2.priority", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, new { IsRunning = false }, "cs2.exe no se encuentra en ejecución. Inicia el juego antes de fijar su prioridad.", false);
-        }
-
-        var proc = procs[0];
-        int originalPid = proc.Id;
-        string originalPriority = GetSafePriorityClass(proc);
-        long originalAffinity = 0xFFF; // Todos los hilos por defecto
-
-        try
-        {
-            originalAffinity = (long)proc.ProcessorAffinity;
-        }
-        catch { }
-
-        // Guardar snapshot previo con validación de PID y nombre (Requerimiento 5)
-        var backupState = new
-        {
-            ProcessId = originalPid,
-            ProcessName = proc.ProcessName,
-            PriorityClass = originalPriority,
-            ProcessorAffinity = originalAffinity,
-            SavedAtUtc = DateTime.UtcNow
-        };
-        await _backupManager.SaveStateAsync("gaming.cs2.priority", backupState);
-        logs.Add($"[SNAPSHOT PERSISTENTE] Guardado: PID {originalPid}, Prioridad {originalPriority}, Afinidad {originalAffinity}");
-
-        // Aplicar cambios: Prioridad High y Máscara de Afinidad 15 (P-Cores 0-3)
-        try
-        {
-            proc.PriorityClass = ProcessPriorityClass.High;
-            logs.Add("[OK] Prioridad fijada en: High");
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO] No se pudo cambiar prioridad: {ex.Message}");
-        }
-
-        try
-        {
-            // Máscara 15 (0x0F) = 4 primeros hilos (P-Cores con HyperThreading)
-            proc.ProcessorAffinity = (IntPtr)15;
-            logs.Add("[OK] Afinidad fijada en Máscara 15 (P-Cores 0-3). Confinamiento fuera de E-Cores completado.");
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO] No se pudo cambiar afinidad: {ex.Message}");
-        }
-
-        // Verificación posterior releyendo el estado
-        string confirmedPriority = GetSafePriorityClass(proc);
-        long confirmedAffinity = 0;
-        try { confirmedAffinity = (long)proc.ProcessorAffinity; } catch { }
-
-        logs.Add($"[VERIFICACIÓN EN KERNEL] Prioridad: {confirmedPriority} | Afinidad: {confirmedAffinity}");
-
-        sw.Stop();
-        logs.Add($"[COMPLETADO] Optimización de CS2 aplicada en {sw.Elapsed.TotalMilliseconds:F1} ms.");
-
-        var currentState = new
-        {
-            ProcessId = proc.Id,
-            PriorityClass = confirmedPriority,
-            ProcessorAffinity = confirmedAffinity,
-            Verified = confirmedPriority == "High" && confirmedAffinity == 15
-        };
-
-        return new OperationResult(true, "gaming.cs2.priority", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backupState, currentState, null, false);
-    }
-
-    // 6. Restauración de CS2 validando PID e identidad del proceso original (Requerimiento 5)
-    private async Task<OperationResult> ExecuteCs2PriorityRestoreWithValidationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[RESTAURACIÓN CS2] Leyendo snapshot previo desde almacenamiento persistente...");
-
-        var backup = await _backupManager.GetLastStateAsync<JsonElement>("gaming.cs2.priority");
-        if (backup.ValueKind == JsonValueKind.Undefined)
-        {
-            sw.Stop();
-            logs.Add("[AVISO] No existe snapshot previo guardado para restaurar.");
-            return new OperationResult(false, "gaming.cs2.priority.restore", "restore", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, null, "No existe snapshot previo para restaurar.", false);
-        }
-
-        int targetPid = 0;
-        string expectedProcessName = "cs2";
-        string targetPriority = "Normal";
-        long targetAffinity = 0xFFF;
-
-        if (backup.TryGetProperty("ProcessId", out var pidProp)) targetPid = pidProp.GetInt32();
-        if (backup.TryGetProperty("ProcessName", out var nameProp)) expectedProcessName = nameProp.GetString() ?? "cs2";
-        if (backup.TryGetProperty("PriorityClass", out var prioProp)) targetPriority = prioProp.GetString() ?? "Normal";
-        if (backup.TryGetProperty("ProcessorAffinity", out var affProp)) targetAffinity = affProp.GetInt64();
-
-        logs.Add($"[SNAPSHOT RECUPERADO] Destino original: PID {targetPid} ('{expectedProcessName}'), Prioridad {targetPriority}, Afinidad {targetAffinity}");
-
-        // Validación estricta de identidad del proceso (Requerimiento 5)
-        Process? matchedProc = null;
-        try
-        {
-            if (targetPid > 0)
-            {
-                var candidate = Process.GetProcessById(targetPid);
-                if (string.Equals(candidate.ProcessName, expectedProcessName, StringComparison.OrdinalIgnoreCase))
-                {
-                    matchedProc = candidate;
-                    logs.Add($"[IDENTIDAD VERIFICADA] PID {targetPid} coincide exactamente con la instancia original de '{expectedProcessName}'.");
-                }
-                else
-                {
-                    logs.Add($"[AVISO DE IDENTIDAD] El PID {targetPid} ahora pertenece a otro proceso ('{candidate.ProcessName}'). Se cancela modificación sobre este PID para evitar efectos colaterales.");
-                }
-            }
-        }
-        catch
-        {
-            logs.Add($"[INFO] La instancia original de CS2 (PID {targetPid}) ya cerró su sesión.");
-        }
-
-        // Si la instancia original no está pero hay otra instancia de cs2 activa, la vinculamos
-        if (matchedProc == null)
-        {
-            var currentCs2 = Process.GetProcessesByName("cs2");
-            if (currentCs2.Length > 0)
-            {
-                matchedProc = currentCs2[0];
-                logs.Add($"[INSTANCIA ACTIVA] Se encontró una nueva instancia de cs2.exe (PID {matchedProc.Id}). Aplicando valores de restauración originales.");
-            }
-        }
-
-        if (matchedProc != null)
-        {
-            try
-            {
-                if (Enum.TryParse<ProcessPriorityClass>(targetPriority, true, out var prioClass))
-                {
-                    matchedProc.PriorityClass = prioClass;
-                    logs.Add($"[RESTAURADO] Prioridad revertida a: {prioClass}");
-                }
-            }
-            catch (Exception ex)
-            {
-                logs.Add($"[AVISO] {ex.Message}");
-            }
-
-            try
-            {
-                matchedProc.ProcessorAffinity = (IntPtr)targetAffinity;
-                logs.Add($"[RESTAURADO] Afinidad revertida a: {targetAffinity}");
-            }
-            catch (Exception ex)
-            {
-                logs.Add($"[AVISO] {ex.Message}");
-            }
-        }
-        else
-        {
-            logs.Add("[INFO] CS2 no se encuentra activo actualmente. El snapshot se considera procesado.");
-        }
-
-        await _backupManager.ClearBackupAsync("gaming.cs2.priority");
-        sw.Stop();
-        logs.Add($"[OK] Restauración completada en {sw.Elapsed.TotalMilliseconds:F1} ms.");
-
-        return new OperationResult(true, "gaming.cs2.priority.restore", "restore", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { Restored = true, TargetPriority = targetPriority }, null, true);
-    }
+    private Task<OperationResult> ExecuteCs2PriorityRestoreWithValidationAsync(List<string> logs, Stopwatch sw) =>
+        GameOperations.ExecuteAsync("gaming.cs2.priority", true);
 
     // 7. Watchdog Loop Detección y Afinidad
     private Task<OperationResult> ExecuteCs2DetectAndAffinityAsync(List<string> logs, Stopwatch sw)
@@ -815,21 +639,8 @@ public class OptimizationService : IOptimizationService
         logs.Add("[WATCHDOG] Comprobando estado en tiempo real de Counter-Strike 2...");
         var state = GetCs2CurrentProcessState();
 
-        if (state.IsRunning && state.ProcessId.HasValue)
-        {
-            logs.Add($"[ACTIVO] cs2.exe detectado (PID: {state.ProcessId}, Prioridad: {state.PriorityClass}, Hilos: {state.ThreadCount}, Memoria: {state.WorkingSetMb} MB)");
-            try
-            {
-                var p = Process.GetProcessById(state.ProcessId.Value);
-                p.ProcessorAffinity = (IntPtr)15;
-                logs.Add("[GUARD] Reafirmada afinidad a P-Cores 0-3 (Máscara 15) contra Thread Director.");
-            }
-            catch { }
-        }
-        else
-        {
-            logs.Add("[INFO] cs2.exe no se encuentra en ejecución.");
-        }
+        logs.Add(state.IsRunning ? $"CS2 detectado: PID {state.ProcessId}. Consulta de solo lectura; no cambia afinidad."
+            : "CS2 no está ejecutándose.");
 
         sw.Stop();
         return Task.FromResult(new OperationResult(true, "gaming.cs2.detect", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, state, null, false));
@@ -1234,19 +1045,24 @@ public class OptimizationService : IOptimizationService
         catch { return "NoDisponible"; }
     }
 
-    private static double GetSystemCpuUsage()
+    private static readonly object CpuSampleLock = new();
+    private static (ulong Idle, ulong Total)? LastCpuSample;
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetSystemTimes(out ulong idle, out ulong kernel, out ulong user);
+
+    private static double? GetSystemCpuUsage()
     {
-        try
+        lock (CpuSampleLock)
         {
-            var p = Process.GetCurrentProcess();
-            var startTime = DateTime.UtcNow;
-            var startCpu = p.TotalProcessorTime;
-            // Cálculo suave de carga de CPU
-            return Math.Min(95.0, Math.Max(18.0, (Environment.ProcessorCount * 7.5)));
-        }
-        catch
-        {
-            return 35.0;
+            if (!OperatingSystem.IsWindows() || !GetSystemTimes(out var idle, out var kernel, out var user)) return null;
+            var total = kernel + user; // Kernel includes idle time.
+            var previous = LastCpuSample;
+            LastCpuSample = (idle, total);
+            if (previous is null || total <= previous.Value.Total || idle < previous.Value.Idle) return null;
+            var elapsed = total - previous.Value.Total;
+            var idleElapsed = idle - previous.Value.Idle;
+            return idleElapsed <= elapsed ? Math.Clamp(100.0 * (elapsed - idleElapsed) / elapsed, 0, 100) : null;
         }
     }
 

@@ -394,13 +394,16 @@ export const ScientificLab: React.FC<ScientificLabProps> = ({
       alert('No se detectaron lecturas del motor C#. Asegúrate de que esté corriendo en http://127.0.0.1:48120.');
       return;
     }
+    if ([realTelemetry.cpuUsagePct, realTelemetry.ramTotalMb, realTelemetry.ramFreeMb, realTelemetry.cpuClockMhz].some(value => value == null)) {
+      alert('Importación parcial: los sensores ausentes conservan los valores manuales. La temperatura ACPI no calibra el sensor del paquete CPU.');
+    }
     setTelemetry(prev => ({
       ...prev,
-      cpuUsagePercent: Math.round(realTelemetry.cpuUsagePct),
-      ramUsedGb: Math.round(((realTelemetry.ramTotalMb - realTelemetry.ramFreeMb) / 1024) * 10) / 10,
-      ramTotalGb: Math.round((realTelemetry.ramTotalMb / 1024) * 10) / 10,
-      currentMhz: realTelemetry.cpuClockMhz > 0 ? realTelemetry.cpuClockMhz : prev.currentMhz,
-      thermalSensorCalibrated: true,
+      cpuUsagePercent: realTelemetry.cpuUsagePct == null ? prev.cpuUsagePercent : Math.round(realTelemetry.cpuUsagePct),
+      ramUsedGb: realTelemetry.ramTotalMb == null || realTelemetry.ramFreeMb == null ? prev.ramUsedGb : Math.round(((realTelemetry.ramTotalMb - realTelemetry.ramFreeMb) / 1024) * 10) / 10,
+      ramTotalGb: realTelemetry.ramTotalMb == null ? prev.ramTotalGb : Math.round((realTelemetry.ramTotalMb / 1024) * 10) / 10,
+      currentMhz: realTelemetry.cpuClockMhz != null && realTelemetry.cpuClockMhz > 0 ? realTelemetry.cpuClockMhz : prev.currentMhz,
+      thermalSensorCalibrated: false,
       ssdFreePercent: diagnostics?.storageDrives[0]?.freePercentage ?? prev.ssdFreePercent
     }));
   };

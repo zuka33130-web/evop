@@ -101,14 +101,14 @@ export interface OperationCatalogItem {
 export interface RealtimeTelemetryData {
   timestampUtc: string;
   timeString: string;
-  cpuUsagePct: number;
-  cpuClockPct: number;
-  cpuClockMhz: number;
-  gpuUsagePct: number;
-  ramFreeMb: number;
-  ramTotalMb: number;
-  ramUsedPct: number;
-  temperatureCelsius: number;
+  cpuUsagePct: number | null;
+  cpuClockPct: number | null;
+  cpuClockMhz: number | null;
+  gpuUsagePct: number | null;
+  ramFreeMb: number | null;
+  ramTotalMb: number | null;
+  ramUsedPct: number | null;
+  temperatureCelsius: number | null;
   throttlingStatus: string;
   telemetrySource: string;
   isCs2Running: boolean;

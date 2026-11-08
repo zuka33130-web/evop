@@ -59,3 +59,14 @@ El workflow ejecuta también `src-native/EvoNativeEngine.Tests`, un arnés sin p
 - El botón de inicio de CS2 ahora espera confirmación del proceso antes de aplicar prioridad/afinidad. Una solicitud a Steam pendiente no se presenta como optimización verificada.
 
 Las pruebas de memoria/servicios usan un adaptador falso, incluyendo alias, aplicación repetida, servicios originalmente detenidos, fallo parcial y recuperación. No certifican el acceso a servicios ni MMAgent en hardware real. Probar en una VM Windows antes de uso habitual.
+
+## Cuarta etapa: gaming por instancia y telemetría sin números inventados
+
+- `gaming.cs2.priority` y `cortex.mode.bestia` cambian únicamente prioridad a High. No cierran aplicaciones, no fuerzan P-Cores y no alteran afinidad. `tweak.cpu.affinity_15` queda separado como prueba explícita: usa los cuatro primeros procesadores lógicos, no detección de topología. Puede empeorar el rendimiento; el catálogo pide confirmación.
+- El snapshot de juego guarda PID, inicio UTC, nombre, prioridad y afinidad originales, y qué campos fueron modificados. Una reaplicación conserva el original; restaurar verifica la misma instancia, comprueba lectura posterior y no borra respaldos ante fallos. Si CS2 cerró y volvió a abrir, el respaldo antiguo no se aplica a la instancia nueva. Se conserva para inspección; por ahora se requiere gestionar ese respaldo obsoleto manualmente con el motor detenido antes de una nueva sesión.
+- Las consultas de detección son de solo lectura; no cambian afinidad bajo el nombre de diagnóstico/watchdog.
+- CPU: uso global por delta `GetSystemTimes`, primera muestra no disponible. RAM: Win32. Clock: valor reportado por WMI, no medición del reloj efectivo. Temperatura: zona térmica ACPI, no paquete CPU. GPU y razones de throttling no tienen proveedor todavía y se devuelven como no disponibles. No se deduce throttling del ratio de reloj ni se calcula temperatura desde carga.
+- Los campos numéricos de telemetría admiten JSON null. La UI muestra N/D, deja vacíos esos campos en CSV y no los mezcla con promedios. No emite un diagnóstico de estabilidad o throttling sin sensores adecuados. El laboratorio informa importación parcial y no considera calibrado un sensor de paquete por leer ACPI.
+- Dependencias frontend corregidas: esbuild compatible con Vite y react-is explícito. bun.lock actualizado; CI añade instalación congelada, TypeScript y build frontend.
+
+Las pruebas de juego usan procesos simulados para validar afinidad conservada por defecto, máscara explícita, reaplicación, restauración, PID reutilizado y fallos de verificación. No prueban interacción con el proceso de CS2 real/anti-cheat. Ejecutar sin inyección de DLLs ni manipulación del juego; esta implementación solo usa propiedades de proceso expuestas por Windows.

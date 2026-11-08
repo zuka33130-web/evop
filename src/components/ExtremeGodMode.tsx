@@ -80,6 +80,10 @@ import {
   fetchRealtimeTelemetry 
 } from '../services/nativeBridge';
 
+// Missing sensors are kept as -1 internally, rendered N/D and excluded from averages.
+const metric = (value: number | null | undefined) => value == null || !Number.isFinite(value) ? -1 : Math.round(value);
+const showMetric = (value: number, unit = '') => value < 0 ? 'N/D' : `${value}${unit}`;
+
 interface ExtremeGodModeProps {
   hardware: HardwareProfile;
   isNativeConnected?: boolean;
@@ -459,17 +463,17 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({
         if (isNativeConnected) {
           try {
             const data = fetchTelemetry ? await fetchTelemetry() : await fetchRealtimeTelemetry();
-            const clk = Math.round(data.cpuClockPct);
-            const cpu = Math.round(data.cpuUsagePct);
-            const gpu = Math.round(data.gpuUsagePct);
-            const ramFree = Math.round(data.ramFreeMb);
-            const temp = Math.round(data.temperatureCelsius);
-            const throttlingFlag = data.throttlingStatus || 'NO';
+            const clk = metric(data.cpuClockPct);
+            const cpu = metric(data.cpuUsagePct);
+            const gpu = metric(data.gpuUsagePct);
+            const ramFree = metric(data.ramFreeMb);
+            const temp = metric(data.temperatureCelsius);
+            const throttlingFlag = data.throttlingStatus || 'UNKNOWN';
 
-            let status: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
-            if (temp >= 92 || clk < 90 || throttlingFlag === 'T-THROT' || throttlingFlag === 'P-THROT') {
+            let status: 'GREEN' | 'YELLOW' | 'RED' = 'YELLOW';
+            if (temp >= 92 || (clk >= 0 && clk < 90) || throttlingFlag === 'T-THROT' || throttlingFlag === 'P-THROT') {
               status = 'RED';
-            } else if (temp >= 85 || clk < 100 || throttlingFlag === 'MARGINAL') {
+            } else if (temp >= 85 || (clk >= 0 && clk < 100) || throttlingFlag === 'MARGINAL') {
               status = 'YELLOW';
             }
 
@@ -535,21 +539,17 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({
       return;
     }
 
-    const avgClk = Math.round(validLogs.reduce((acc, r) => acc + r.clk, 0) / validLogs.length);
-    const maxTemp = Math.max(...validLogs.map(r => r.temp));
-    const throttlingEvents = validLogs.filter(r => r.status === 'RED').length;
-    const gpuAvg = Math.round(validLogs.reduce((acc, r) => acc + r.gpu, 0) / validLogs.length);
-
-    let verdict = 'Excelente: Frecuencias sostenidas y temperaturas estables medidas por hardware.';
-    let action = 'El clamp de 28W en ThrottleStop y el modo IDLEDISABLE 1 mantienen los P-Cores a 4.4GHz estables.';
-
-    if (throttlingEvents > 2 || maxTemp >= 95) {
-      verdict = 'Alerta de Thermal Throttling: La temperatura del paquete superó los 94°C.';
-      action = 'Reduce PL1 a 25W en ThrottleStop y verifica perfil Full Speed en BIOS/MyASUS.';
-    } else if (avgClk < 95) {
-      verdict = 'Power Throttling Leve: La CPU promedió <95% de su reloj máximo.';
-      action = 'Activa EPP = 0 en ThrottleStop y confirma que cs2.exe tiene afinidad a los núcleos 0-3.';
-    }
+    const mean = (values: number[]) => {
+      const known = values.filter(value => value >= 0);
+      return known.length ? Math.round(known.reduce((a, b) => a + b, 0) / known.length) : -1;
+    };
+    const avgClk = mean(validLogs.map(r => r.clk));
+    const knownTemperatures = validLogs.map(r => r.temp).filter(value => value >= 0);
+    const maxTemp = knownTemperatures.length ? Math.max(...knownTemperatures) : -1;
+    const throttlingEvents = -1; // No hardware limit-reason sensor, not zero proven events.
+    const gpuAvg = mean(validLogs.map(r => r.gpu));
+    const verdict = 'Lecturas disponibles de Windows; no se puede confirmar throttling ni estabilidad del reloj efectivo.';
+    const action = 'N/D indica sensor no disponible. Compara capturas de frametimes A/B antes de conservar un ajuste. La zona ACPI no es la temperatura del paquete CPU.';
 
     setSimulationSummary({
       totalSamples: validLogs.length,
@@ -566,7 +566,7 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({
     if (simulatedLogs.length === 0) return;
     const header = 'TIMESTAMP,CLK_PCT,CPU_UTIL_PCT,GPU_UTIL_PCT,RAM_FREE_MB,TEMP_C,THROTTLE_FLAG\n';
     const rows = simulatedLogs.map(r => 
-      `${r.time},${r.clk},${r.cpu},${r.gpu},${r.ramFree},${r.temp},${r.throttlingFlag}`
+      `${r.time},${[r.clk, r.cpu, r.gpu, r.ramFree, r.temp].map(v => v < 0 ? "" : v).join(",")},${r.throttlingFlag}`
     ).join('\n');
     downloadSingleFile('CS2_GODMODE_TELEMETRIA_REAL.csv', header + rows);
   };
@@ -1326,29 +1326,29 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({
               <div className="p-2 rounded bg-neutral-900 border border-neutral-800">
                 <span className="text-neutral-400 block text-[10px]">RELOJ CPU (CLK)</span>
                 <span className="text-sm font-bold text-emerald-400">
-                  {simulatedLogs.length > 0 ? `${simulatedLogs[simulatedLogs.length - 1].clk}%` : '--'}
+                  {simulatedLogs.length > 0 ? showMetric(simulatedLogs[simulatedLogs.length - 1].clk, '%') : '--'}
                 </span>
               </div>
               <div className="p-2 rounded bg-neutral-900 border border-neutral-800">
                 <span className="text-neutral-400 block text-[10px]">USO CPU</span>
                 <span className="text-sm font-bold text-cyan-400">
-                  {simulatedLogs.length > 0 ? `${simulatedLogs[simulatedLogs.length - 1].cpu}%` : '--'}
+                  {simulatedLogs.length > 0 ? showMetric(simulatedLogs[simulatedLogs.length - 1].cpu, '%') : '--'}
                 </span>
               </div>
               <div className="p-2 rounded bg-neutral-900 border border-neutral-800">
                 <span className="text-neutral-400 block text-[10px]">USO GPU 3D</span>
                 <span className="text-sm font-bold text-amber-400">
-                  {simulatedLogs.length > 0 ? `${simulatedLogs[simulatedLogs.length - 1].gpu}%` : '--'}
+                  {simulatedLogs.length > 0 ? showMetric(simulatedLogs[simulatedLogs.length - 1].gpu, '%') : '--'}
                 </span>
               </div>
               <div className="p-2 rounded bg-neutral-900 border border-neutral-800">
                 <span className="text-neutral-400 block text-[10px]">RAM LIBRE</span>
                 <span className="text-sm font-bold text-indigo-400">
-                  {simulatedLogs.length > 0 ? `${simulatedLogs[simulatedLogs.length - 1].ramFree} MB` : '--'}
+                  {simulatedLogs.length > 0 ? showMetric(simulatedLogs[simulatedLogs.length - 1].ramFree, ' MB') : '--'}
                 </span>
               </div>
               <div className="p-2 rounded bg-neutral-900 border border-neutral-800 col-span-2 sm:col-span-1">
-                <span className="text-neutral-400 block text-[10px]">TEMP PAQUETE</span>
+                <span className="text-neutral-400 block text-[10px]">TEMP ZONA ACPI</span>
                 <span className={`text-sm font-bold ${
                   simulatedLogs.length > 0 && simulatedLogs[simulatedLogs.length - 1].temp >= 92 
                     ? 'text-rose-400' 
@@ -1356,7 +1356,7 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({
                     ? 'text-amber-400'
                     : 'text-emerald-400'
                 }`}>
-                  {simulatedLogs.length > 0 ? `${simulatedLogs[simulatedLogs.length - 1].temp}°C` : '--'}
+                  {simulatedLogs.length > 0 ? showMetric(simulatedLogs[simulatedLogs.length - 1].temp, '°C') : '--'}
                 </span>
               </div>
             </div>
@@ -1365,7 +1365,7 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({
             <div className="bg-neutral-950 p-4 font-mono text-xs max-h-64 overflow-y-auto space-y-1">
               {simulatedLogs.length === 0 ? (
                 <div className="text-neutral-500 py-8 text-center">
-                  Pulsa "Iniciar Monitoreo (1s)" para simular la telemetría en tiempo real de tu partida en el PN64.
+                  Pulsa "Iniciar Monitoreo (1s)" para consultar las lecturas disponibles de Windows.
                 </div>
               ) : (
                 simulatedLogs.map((row, idx) => (
@@ -1379,11 +1379,11 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({
                         ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                         : 'bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse'
                     }`}>
-                      {row.status === 'GREEN' ? '🟢 NORMAL' : row.status === 'YELLOW' ? '🟡 ALERTA' : '🔴 THROTTLE'}
+                      {row.throttlingFlag === 'UNKNOWN' ? 'SIN DIAGNÓSTICO' : row.status === 'GREEN' ? 'NORMAL' : 'REVISAR'}
                     </span>
 
                     <span className="text-neutral-300">
-                      CLK: <strong className="text-white">{row.clk}%</strong> | CPU: {row.cpu}% | GPU: {row.gpu}% | RAM: {row.ramFree}MB | TEMP: <strong className={row.temp >= 90 ? 'text-rose-400' : 'text-neutral-200'}>{row.temp}°C</strong>
+                      CLK: <strong className="text-white">{showMetric(row.clk, '%')}</strong> | CPU: {showMetric(row.cpu, '%')} | GPU: {showMetric(row.gpu, '%')} | RAM: {row.ramFree}MB | TEMP: <strong className={row.temp >= 90 ? 'text-rose-400' : 'text-neutral-200'}>{showMetric(row.temp, '°C')}</strong>
                     </span>
 
                     {row.throttlingFlag !== 'NO' && (
@@ -1402,27 +1402,27 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({
               <div className="p-5 bg-neutral-900 border-t border-neutral-800 space-y-3">
                 <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
                   <Check className="w-4 h-4" />
-                  <span>DIAGNÓSTICO AUTOMÁTICO DE LA SESIÓN DE JUEGO ({simulationSummary.totalSamples} muestras)</span>
+                  <span>RESUMEN DE LECTURAS DE LA SESIÓN ({simulationSummary.totalSamples} muestras)</span>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                   <div className="p-3 bg-neutral-950 rounded-lg border border-neutral-800">
                     <span className="text-neutral-400 text-[10px] block">PROMEDIO CLOCK</span>
-                    <span className="text-base font-bold text-white">{simulationSummary.avgClk}%</span>
+                    <span className="text-base font-bold text-white">{showMetric(simulationSummary.avgClk, '%')}</span>
                   </div>
                   <div className="p-3 bg-neutral-950 rounded-lg border border-neutral-800">
-                    <span className="text-neutral-400 text-[10px] block">TEMP MÁXIMA</span>
-                    <span className="text-base font-bold text-white">{simulationSummary.maxTemp}°C</span>
+                    <span className="text-neutral-400 text-[10px] block">TEMP ACPI MÁXIMA</span>
+                    <span className="text-base font-bold text-white">{showMetric(simulationSummary.maxTemp, '°C')}</span>
                   </div>
                   <div className="p-3 bg-neutral-950 rounded-lg border border-neutral-800">
                     <span className="text-neutral-400 text-[10px] block">EVENTOS THROTTLING</span>
                     <span className={`text-base font-bold ${simulationSummary.throttlingEvents > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                      {simulationSummary.throttlingEvents}
+                      {showMetric(simulationSummary.throttlingEvents)}
                     </span>
                   </div>
                   <div className="p-3 bg-neutral-950 rounded-lg border border-neutral-800">
                     <span className="text-neutral-400 text-[10px] block">USO GPU PROMEDIO</span>
-                    <span className="text-base font-bold text-amber-400">{simulationSummary.gpuAvg}%</span>
+                    <span className="text-base font-bold text-amber-400">{showMetric(simulationSummary.gpuAvg, '%')}</span>
                   </div>
                 </div>
 

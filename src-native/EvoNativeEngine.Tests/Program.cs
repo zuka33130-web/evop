@@ -58,6 +58,30 @@ Assert(!(await tuning.ExecuteAsync("cortex.mode.stutter", false)).Success, "Memo
 Assert(tuningBackups.HasBackup("verified.v1.tweak.memory.pagecombining_off"), "Memory snapshot retained");
 Console.WriteLine("PASS: memory and service snapshots, aliases, reapply, original stopped state, partial failure and retry.");
 
+var gameBackups = new MemoryBackups();
+var gameProvider = new FakeGameProvider();
+var gaming = new GameOptimizationService(gameBackups, gameProvider);
+var normalGame = gameProvider.State;
+Assert((await gaming.ExecuteAsync("gaming.cs2.priority", false)).Success, "Game priority apply");
+Assert(gameProvider.State.Priority == System.Diagnostics.ProcessPriorityClass.High && gameProvider.State.Affinity == normalGame.Affinity, "Default preserves affinity");
+Assert((await gaming.ExecuteAsync("cortex.mode.bestia", false)).Success, "Repeated priority apply");
+Assert((await gaming.ExecuteAsync("tweak.cpu.affinity_15", false)).Success, "Explicit affinity apply");
+Assert(gameProvider.State.Affinity == 15, "Explicit affinity verified");
+Assert((await gaming.ExecuteAsync("gaming.cs2.priority", true)).Success, "Game combined restore");
+Assert(gameProvider.State == normalGame, "Original process values preserved across aliases");
+Assert(!(await gaming.ExecuteAsync("gaming.cs2.priority", true)).Success, "Game missing backup fails");
+Assert((await gaming.ExecuteAsync("gaming.cs2.priority", false)).Success, "Apply before PID reuse");
+gameProvider.State = normalGame with { StartedUtcTicks = normalGame.StartedUtcTicks + 1 };
+Assert(!(await gaming.ExecuteAsync("gaming.cs2.priority", true)).Success, "Same PID different start time must not restore");
+Assert(gameProvider.State.Priority == normalGame.Priority && gameBackups.HasBackup(GameOptimizationService.BackupKey), "PID reuse untouched and backup kept");
+gameProvider.State = normalGame;
+gameProvider.IgnoreWrites = true;
+Assert(!(await gaming.ExecuteAsync("gaming.cs2.priority", false)).Success, "Game verification failure");
+Assert(gameBackups.HasBackup(GameOptimizationService.BackupKey), "Game failure keeps recovery data");
+gameProvider.IgnoreWrites = false;
+Assert((await gaming.ExecuteAsync("gaming.cs2.priority.restore", false)).Success, "Restore action alias");
+Console.WriteLine("PASS: game priority preserves affinity, explicit affinity, shared original state, PID reuse, verification and recovery.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();
@@ -97,4 +121,15 @@ sealed class FakeWindowsTuning : IWindowsTuning
         if (name == FailService) throw new IOException("Service failure");
         Services[name] = running;
     }
+}
+
+sealed class FakeGameProvider : IGameProcessProvider, IGameProcess
+{
+    public GameProcessState State = new(42, 1234567, "cs2", System.Diagnostics.ProcessPriorityClass.Normal, 255);
+    public bool IgnoreWrites;
+    public IGameProcess OpenCs2() => this;
+    public GameProcessState Read() => State;
+    public void SetPriority(System.Diagnostics.ProcessPriorityClass priority) { if (!IgnoreWrites) State = State with { Priority = priority }; }
+    public void SetAffinity(long mask) { if (!IgnoreWrites) State = State with { Affinity = mask }; }
+    public void Dispose() { }
 }
