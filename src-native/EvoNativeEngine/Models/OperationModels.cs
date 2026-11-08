@@ -10,7 +10,9 @@ public record OperationCatalogItem(
     string Category,
     bool RequiresElevation,
     bool CanRestore,
-    bool IsImplemented
+    bool IsImplemented,
+    bool RequiresConfirmation = false,
+    string? ConfirmationMessage = null
 );
 
 public record OperationResult(
@@ -71,4 +73,21 @@ public record TempCleanupState(
     long BytesFreed,
     double MbFreed,
     string TempDirectory
+);
+
+public record RealtimeTelemetryData(
+    DateTime TimestampUtc,
+    string TimeString,
+    double CpuUsagePct,
+    double CpuClockPct,
+    int CpuClockMhz,
+    double GpuUsagePct,
+    double RamFreeMb,
+    double RamTotalMb,
+    double RamUsedPct,
+    double TemperatureCelsius,
+    string ThrottlingStatus, // "NO", "P-THROT", "T-THROT", "MARGINAL"
+    string TelemetrySource,  // "Hardware Real (Win32/WMI)"
+    bool IsCs2Running,
+    int? Cs2ProcessId
 );

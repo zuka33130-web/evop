@@ -74,9 +74,19 @@ import {
   generateRevertirTodoBat
 } from '../utils/discreteModulesBat';
 import { downloadSingleFile } from '../utils/zipGenerator';
+import { 
+  OperationResult, 
+  RealtimeTelemetryData, 
+  fetchRealtimeTelemetry 
+} from '../services/nativeBridge';
 
 interface ExtremeGodModeProps {
   hardware: HardwareProfile;
+  isNativeConnected?: boolean;
+  activeOperation?: string | null;
+  onApplyOp?: (opId: string) => Promise<OperationResult>;
+  onRestoreOp?: (opId: string) => Promise<OperationResult>;
+  fetchTelemetry?: () => Promise<RealtimeTelemetryData>;
 }
 
 interface TelemetryRow {
@@ -90,7 +100,14 @@ interface TelemetryRow {
   throttlingFlag: string;
 }
 
-export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
+export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ 
+  hardware,
+  isNativeConnected = false,
+  activeOperation = null,
+  onApplyOp,
+  onRestoreOp,
+  fetchTelemetry
+}) => {
   const [subTab, setSubTab] = useState<'fase3_ultra' | 'fase2_extremo' | 'fase3_godmode'>('fase3_ultra');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [ultraCategoryFilter, setUltraCategoryFilter] = useState<string>('all');
@@ -98,7 +115,16 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
   // Script code viewer state
   const [selectedScript, setSelectedScript] = useState<string>('iniciar_todo_v3');
 
-  // Simulator state for CS2_GODMODE_MONITOR.ps1
+  // Real operations state
+  const [runningOpId, setRunningOpId] = useState<string | null>(null);
+  const [opFeedback, setOpFeedback] = useState<{
+    opId: string;
+    success: boolean;
+    message: string;
+    logs: string[];
+  } | null>(null);
+
+  // Monitor state for CS2_GODMODE_MONITOR
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulatedLogs, setSimulatedLogs] = useState<TelemetryRow[]>([]);
   const [simulationSummary, setSimulationSummary] = useState<{
@@ -112,6 +138,58 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
   } | null>(null);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  const handleExecuteRealOp = async (opId: string, requiresConfirm = false, confirmMsg = '') => {
+    if (!onApplyOp) return;
+    if (requiresConfirm) {
+      const ok = window.confirm(confirmMsg || `¿Deseas aplicar la operación sensible '${opId}'?`);
+      if (!ok) return;
+    }
+    setRunningOpId(opId);
+    setOpFeedback(null);
+    try {
+      const res = await onApplyOp(opId);
+      setOpFeedback({
+        opId,
+        success: res.success,
+        message: res.success ? `Operación '${opId}' ejecutada y verificada.` : (res.errorMessage || 'Error en ejecución.'),
+        logs: res.logs || []
+      });
+    } catch (err: any) {
+      setOpFeedback({
+        opId,
+        success: false,
+        message: err.message || 'Error al ejecutar operación',
+        logs: []
+      });
+    } finally {
+      setRunningOpId(null);
+    }
+  };
+
+  const handleExecuteRestoreOp = async (opId: string) => {
+    if (!onRestoreOp) return;
+    setRunningOpId(opId);
+    setOpFeedback(null);
+    try {
+      const res = await onRestoreOp(opId);
+      setOpFeedback({
+        opId,
+        success: res.success,
+        message: res.success ? `Operación '${opId}' restaurada con éxito.` : (res.errorMessage || 'Error al restaurar.'),
+        logs: res.logs || []
+      });
+    } catch (err: any) {
+      setOpFeedback({
+        opId,
+        success: false,
+        message: err.message || 'Error al restaurar operación',
+        logs: []
+      });
+    } finally {
+      setRunningOpId(null);
+    }
+  };
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -370,53 +448,68 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
     }
   };
 
-  // Telemetry Simulator Interval
+  // Real Windows Telemetry polling interval from EvoNativeEngine (WMI / ACPI Win32)
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isSimulating) {
-      timer = setInterval(() => {
+      const poll = async () => {
         const now = new Date();
         const timeStr = now.toTimeString().split(' ')[0];
 
-        const clkVariation = Math.floor(Math.random() * 14) - 5;
-        const clk = Math.max(82, Math.min(108, 101 + clkVariation));
-        const cpu = Math.floor(Math.random() * 22) + 48;
-        const gpu = Math.floor(Math.random() * 6) + 95;
-        const ramFree = Math.floor(Math.random() * 800) + 7200;
-        const tempSpike = Math.random() > 0.85 ? Math.floor(Math.random() * 8) : 0;
-        const temp = 80 + Math.floor(Math.random() * 6) + tempSpike;
+        if (isNativeConnected) {
+          try {
+            const data = fetchTelemetry ? await fetchTelemetry() : await fetchRealtimeTelemetry();
+            const clk = Math.round(data.cpuClockPct);
+            const cpu = Math.round(data.cpuUsagePct);
+            const gpu = Math.round(data.gpuUsagePct);
+            const ramFree = Math.round(data.ramFreeMb);
+            const temp = Math.round(data.temperatureCelsius);
+            const throttlingFlag = data.throttlingStatus || 'NO';
 
-        let status: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
-        let throttlingFlag = 'NO';
+            let status: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
+            if (temp >= 92 || clk < 90 || throttlingFlag === 'T-THROT' || throttlingFlag === 'P-THROT') {
+              status = 'RED';
+            } else if (temp >= 85 || clk < 100 || throttlingFlag === 'MARGINAL') {
+              status = 'YELLOW';
+            }
 
-        if (temp >= 94 || clk < 90) {
-          status = 'RED';
-          throttlingFlag = temp >= 94 ? 'T-THROT' : 'P-THROT';
-        } else if (temp >= 85 || clk < 100) {
-          status = 'YELLOW';
-          throttlingFlag = 'MARGINAL';
+            const newRow: TelemetryRow = {
+              time: timeStr,
+              clk,
+              cpu,
+              gpu,
+              ramFree,
+              temp,
+              status,
+              throttlingFlag
+            };
+
+            setSimulatedLogs(prev => [...prev, newRow].slice(-60));
+          } catch (err: any) {
+            console.warn('Error al consultar telemetría real de Windows:', err);
+          }
+        } else {
+          // Motor nativo no conectado: informar sin inventar números falsos
+          const newRow: TelemetryRow = {
+            time: timeStr,
+            clk: 0,
+            cpu: 0,
+            gpu: 0,
+            ramFree: 0,
+            temp: 0,
+            status: 'YELLOW',
+            throttlingFlag: 'OFFLINE'
+          };
+          setSimulatedLogs(prev => [...prev, newRow].slice(-60));
         }
+      };
 
-        const newRow: TelemetryRow = {
-          time: timeStr,
-          clk,
-          cpu,
-          gpu,
-          ramFree,
-          temp,
-          status,
-          throttlingFlag
-        };
-
-        setSimulatedLogs(prev => {
-          const next = [...prev, newRow];
-          return next.slice(-60);
-        });
-      }, 1000);
+      poll();
+      timer = setInterval(poll, 1000);
     }
 
     return () => clearInterval(timer);
-  }, [isSimulating]);
+  }, [isSimulating, isNativeConnected, fetchTelemetry]);
 
   useEffect(() => {
     if (isSimulating && logsEndRef.current) {
@@ -426,18 +519,32 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
 
   const handleStopSimulation = () => {
     setIsSimulating(false);
-    if (simulatedLogs.length === 0) return;
+    const validLogs = simulatedLogs.filter(r => r.throttlingFlag !== 'OFFLINE');
+    if (validLogs.length === 0) {
+      if (simulatedLogs.length > 0 && !isNativeConnected) {
+        setSimulationSummary({
+          totalSamples: simulatedLogs.length,
+          avgClk: 0,
+          maxTemp: 0,
+          throttlingEvents: 0,
+          gpuAvg: 0,
+          verdict: 'Motor Nativo C# Desconectado',
+          action: 'Inicia EvoNativeEngine en Windows 11 (http://127.0.0.1:48120) para registrar lecturas de hardware reales por WMI.'
+        });
+      }
+      return;
+    }
 
-    const avgClk = Math.round(simulatedLogs.reduce((acc, r) => acc + r.clk, 0) / simulatedLogs.length);
-    const maxTemp = Math.max(...simulatedLogs.map(r => r.temp));
-    const throttlingEvents = simulatedLogs.filter(r => r.status === 'RED').length;
-    const gpuAvg = Math.round(simulatedLogs.reduce((acc, r) => acc + r.gpu, 0) / simulatedLogs.length);
+    const avgClk = Math.round(validLogs.reduce((acc, r) => acc + r.clk, 0) / validLogs.length);
+    const maxTemp = Math.max(...validLogs.map(r => r.temp));
+    const throttlingEvents = validLogs.filter(r => r.status === 'RED').length;
+    const gpuAvg = Math.round(validLogs.reduce((acc, r) => acc + r.gpu, 0) / validLogs.length);
 
-    let verdict = 'Excelente: Frecuencias sostenidas al 100% sin estrangulamiento térmico.';
+    let verdict = 'Excelente: Frecuencias sostenidas y temperaturas estables medidas por hardware.';
     let action = 'El clamp de 28W en ThrottleStop y el modo IDLEDISABLE 1 mantienen los P-Cores a 4.4GHz estables.';
 
     if (throttlingEvents > 2 || maxTemp >= 95) {
-      verdict = 'Alerta de Thermal Throttling: La temperatura superó los 94°C.';
+      verdict = 'Alerta de Thermal Throttling: La temperatura del paquete superó los 94°C.';
       action = 'Reduce PL1 a 25W en ThrottleStop y verifica perfil Full Speed en BIOS/MyASUS.';
     } else if (avgClk < 95) {
       verdict = 'Power Throttling Leve: La CPU promedió <95% de su reloj máximo.';
@@ -445,7 +552,7 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
     }
 
     setSimulationSummary({
-      totalSamples: simulatedLogs.length,
+      totalSamples: validLogs.length,
       avgClk,
       maxTemp,
       throttlingEvents,
@@ -461,7 +568,7 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
     const rows = simulatedLogs.map(r => 
       `${r.time},${r.clk},${r.cpu},${r.gpu},${r.ramFree},${r.temp},${r.throttlingFlag}`
     ).join('\n');
-    downloadSingleFile('CS2_GODMODE_TELEMETRIA_SIMULADA.csv', header + rows);
+    downloadSingleFile('CS2_GODMODE_TELEMETRIA_REAL.csv', header + rows);
   };
 
   const currentScript = getScriptData(selectedScript);
@@ -534,6 +641,35 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
         </div>
       </div>
 
+      {/* Real Operation Execution Feedback Banner */}
+      {opFeedback && (
+        <div className={`p-4 rounded-xl border flex flex-col gap-2 ${
+          opFeedback.success 
+            ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200' 
+            : 'bg-rose-950/40 border-rose-500/40 text-rose-200'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-semibold text-xs sm:text-sm">
+              {opFeedback.success ? <Check className="w-4 h-4 text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-rose-400" />}
+              <span>{opFeedback.message}</span>
+            </div>
+            <button
+              onClick={() => setOpFeedback(null)}
+              className="text-xs px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-300"
+            >
+              Cerrar
+            </button>
+          </div>
+          {opFeedback.logs && opFeedback.logs.length > 0 && (
+            <div className="bg-neutral-950/90 rounded p-2 text-[11px] font-mono max-h-28 overflow-y-auto space-y-0.5 text-neutral-300 border border-neutral-800">
+              {opFeedback.logs.map((log, i) => (
+                <div key={i}>{log}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ========================================================================= */}
       {/* VIEW 0: FASE 3 - MODO ULTRA AGRESIVO (Módulos 16 al 25) */}
       {/* ========================================================================= */}
@@ -554,23 +690,33 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
                   Ejecuta en secuencia perfecta los <strong className="text-white">25 módulos y más de 500 optimizaciones</strong>. Crea automáticamente un punto de restauración del sistema antes de comenzar y ofrece reinicio automático.
                 </p>
               </div>
-              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-rose-900/40">
+              <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-rose-900/40">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedScript('iniciar_todo_v3');
+                      copyToClipboard(generateIniciarTodoV3Bat(), 'card_iniciar_v3');
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg transition-colors"
+                  >
+                    {copiedId === 'card_iniciar_v3' ? <Check className="w-3.5 h-3.5 text-white" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedId === 'card_iniciar_v3' ? '¡Copiado!' : 'Copiar Script'}</span>
+                  </button>
+                  <button
+                    onClick={() => downloadSingleFile('INICIAR_TODO_V3.bat', generateIniciarTodoV3Bat())}
+                    className="p-2 bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 rounded-lg transition-colors"
+                    title="Descargar INICIAR_TODO_V3.bat"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
                 <button
-                  onClick={() => {
-                    setSelectedScript('iniciar_todo_v3');
-                    copyToClipboard(generateIniciarTodoV3Bat(), 'card_iniciar_v3');
-                  }}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold bg-rose-500 hover:bg-rose-400 text-white rounded-lg transition-colors"
+                  disabled={!isNativeConnected || runningOpId !== null}
+                  onClick={() => handleExecuteRealOp('cortex.mode.iniciar_todo', true, '¿Confirmas ejecutar la suite completa V3 (25 módulos con punto de restauración automático y verificación)?')}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-all shadow-sm"
                 >
-                  {copiedId === 'card_iniciar_v3' ? <Check className="w-3.5 h-3.5 text-white" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedId === 'card_iniciar_v3' ? '¡Copiado!' : 'Copiar Script'}</span>
-                </button>
-                <button
-                  onClick={() => downloadSingleFile('INICIAR_TODO_V3.bat', generateIniciarTodoV3Bat())}
-                  className="p-2 bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 rounded-lg transition-colors"
-                  title="Descargar INICIAR_TODO_V3.bat"
-                >
-                  <Download className="w-4 h-4" />
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>{runningOpId === 'cortex.mode.iniciar_todo' ? 'Ejecutando y Verificando...' : 'Ejecutar Suite V3 Real (Windows)'}</span>
                 </button>
               </div>
             </div>
@@ -588,23 +734,33 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
                   Tu lanzador diario personal: cierra 20 procesos invasivos (Chrome, Discord, Spotify), vacía memoria RAM, activa temporizador a 0.5ms, energía máxima y <strong className="text-emerald-300">lanza CS2 automáticamente</strong> con los mejores flags.
                 </p>
               </div>
-              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-emerald-900/40">
+              <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-emerald-900/40">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedScript('auto_pre_game');
+                      copyToClipboard(generateAutoPreGameBat(), 'card_pregame');
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg transition-colors"
+                  >
+                    {copiedId === 'card_pregame' ? <Check className="w-3.5 h-3.5 text-neutral-950" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedId === 'card_pregame' ? '¡Copiado!' : 'Copiar'}</span>
+                  </button>
+                  <button
+                    onClick={() => downloadSingleFile('24_AUTO_PRE_GAME.bat', generateAutoPreGameBat())}
+                    className="p-2 bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 rounded-lg transition-colors"
+                    title="Descargar 24_AUTO_PRE_GAME.bat"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
                 <button
-                  onClick={() => {
-                    setSelectedScript('auto_pre_game');
-                    copyToClipboard(generateAutoPreGameBat(), 'card_pregame');
-                  }}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold bg-emerald-400 hover:bg-emerald-300 text-neutral-950 rounded-lg transition-colors"
+                  disabled={!isNativeConnected || runningOpId !== null}
+                  onClick={() => handleExecuteRealOp('cortex.mode.auto_pre_game')}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-950 rounded-lg transition-all shadow-sm"
                 >
-                  {copiedId === 'card_pregame' ? <Check className="w-3.5 h-3.5 text-neutral-950" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedId === 'card_pregame' ? '¡Copiado!' : 'Copiar Lanzador'}</span>
-                </button>
-                <button
-                  onClick={() => downloadSingleFile('24_AUTO_PRE_GAME.bat', generateAutoPreGameBat())}
-                  className="p-2 bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 rounded-lg transition-colors"
-                  title="Descargar 24_AUTO_PRE_GAME.bat"
-                >
-                  <Download className="w-4 h-4" />
+                  <PlayCircle className="w-3.5 h-3.5" />
+                  <span>{runningOpId === 'cortex.mode.auto_pre_game' ? 'Ejecutando y Lanzando CS2...' : 'Ejecutar Pre-Game Real (Limpiar + CS2)'}</span>
                 </button>
               </div>
             </div>
@@ -841,23 +997,33 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
                   Aplica los 10 tweaks extremos de sistema: mitigaciones OFF, IFEO Prioridad 3 fija para cs2.exe, PageCombining OFF, MSI Mode y 8GB pagefile estática.
                 </p>
               </div>
-              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-neutral-800/80">
+              <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-neutral-800/80">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedScript('extreme_v2');
+                      copyToClipboard(generateExtremeV2Ps1(), 'card_ext_v2');
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white rounded-md transition-colors"
+                  >
+                    {copiedId === 'card_ext_v2' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedId === 'card_ext_v2' ? 'Copiado' : 'Copiar'}</span>
+                  </button>
+                  <button
+                    onClick={() => downloadSingleFile('EXTREME_v2.ps1', generateExtremeV2Ps1())}
+                    className="p-1.5 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 rounded-md transition-colors"
+                    title="Descargar EXTREME_v2.ps1"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
                 <button
-                  onClick={() => {
-                    setSelectedScript('extreme_v2');
-                    copyToClipboard(generateExtremeV2Ps1(), 'card_ext_v2');
-                  }}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white rounded-md transition-colors"
+                  disabled={!isNativeConnected || runningOpId !== null}
+                  onClick={() => handleExecuteRealOp('cortex.mode.extreme_v2', true, '¿Confirmas aplicar la Fase 2 Extrema con mitigaciones del kernel OFF y prioridad IFEO fija?')}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-md transition-colors"
                 >
-                  {copiedId === 'card_ext_v2' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedId === 'card_ext_v2' ? 'Copiado' : 'Copiar'}</span>
-                </button>
-                <button
-                  onClick={() => downloadSingleFile('EXTREME_v2.ps1', generateExtremeV2Ps1())}
-                  className="p-1.5 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 rounded-md transition-colors"
-                  title="Descargar EXTREME_v2.ps1"
-                >
-                  <Download className="w-4 h-4" />
+                  <Flame className="w-3.5 h-3.5" />
+                  <span>{runningOpId === 'cortex.mode.extreme_v2' ? 'Aplicando...' : 'Aplicar Fase 2 Real'}</span>
                 </button>
               </div>
             </div>
@@ -875,23 +1041,33 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
                   Lanzador interactivo de sesión de juego: mata Explorer, apaga 30 servicios, activa IDLEDISABLE 1 y al pulsar cualquier tecla tras jugar, ¡restaura todo automáticamente!
                 </p>
               </div>
-              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-neutral-800/80">
+              <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-neutral-800/80">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedScript('booster_v2');
+                      copyToClipboard(generateBoosterV2Bat(), 'card_booster_v2');
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white rounded-md transition-colors"
+                  >
+                    {copiedId === 'card_booster_v2' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedId === 'card_booster_v2' ? 'Copiado' : 'Copiar'}</span>
+                  </button>
+                  <button
+                    onClick={() => downloadSingleFile('CS2_Booster_v2.bat', generateBoosterV2Bat())}
+                    className="p-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded-md transition-colors"
+                    title="Descargar CS2_Booster_v2.bat"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
                 <button
-                  onClick={() => {
-                    setSelectedScript('booster_v2');
-                    copyToClipboard(generateBoosterV2Bat(), 'card_booster_v2');
-                  }}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white rounded-md transition-colors"
+                  disabled={!isNativeConnected || runningOpId !== null}
+                  onClick={() => handleExecuteRealOp('cortex.mode.extreme_v2')}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-950 rounded-md transition-colors"
                 >
-                  {copiedId === 'card_booster_v2' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedId === 'card_booster_v2' ? 'Copiado' : 'Copiar'}</span>
-                </button>
-                <button
-                  onClick={() => downloadSingleFile('CS2_Booster_v2.bat', generateBoosterV2Bat())}
-                  className="p-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded-md transition-colors"
-                  title="Descargar CS2_Booster_v2.bat"
-                >
-                  <Download className="w-4 h-4" />
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>{runningOpId === 'cortex.mode.extreme_v2' ? 'Iniciando...' : 'Ejecutar Booster Real'}</span>
                 </button>
               </div>
             </div>
@@ -909,23 +1085,33 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
                   Restaura el sistema al estado seguro 100%: reactiva Spectre/Meltdown, borra prioridad IFEO, reactiva PageCombining y reestablece el pagefile de Windows.
                 </p>
               </div>
-              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-neutral-800/80">
+              <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-neutral-800/80">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedScript('extreme_undo');
+                      copyToClipboard(generateExtremeUndoPs1(), 'card_undo');
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white rounded-md transition-colors"
+                  >
+                    {copiedId === 'card_undo' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedId === 'card_undo' ? 'Copiado' : 'Copiar'}</span>
+                  </button>
+                  <button
+                    onClick={() => downloadSingleFile('EXTREME_Undo.ps1', generateExtremeUndoPs1())}
+                    className="p-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 rounded-md transition-colors"
+                    title="Descargar EXTREME_Undo.ps1"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
                 <button
-                  onClick={() => {
-                    setSelectedScript('extreme_undo');
-                    copyToClipboard(generateExtremeUndoPs1(), 'card_undo');
-                  }}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-white rounded-md transition-colors"
+                  disabled={!isNativeConnected || runningOpId !== null}
+                  onClick={() => handleExecuteRestoreOp('cortex.mode.extreme_undo')}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-md transition-colors"
                 >
-                  {copiedId === 'card_undo' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedId === 'card_undo' ? 'Copiado' : 'Copiar'}</span>
-                </button>
-                <button
-                  onClick={() => downloadSingleFile('EXTREME_Undo.ps1', generateExtremeUndoPs1())}
-                  className="p-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 rounded-md transition-colors"
-                  title="Descargar EXTREME_Undo.ps1"
-                >
-                  <Download className="w-4 h-4" />
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{runningOpId === 'cortex.mode.extreme_undo' ? 'Restaurando...' : 'Restaurar Fase 2 Real'}</span>
                 </button>
               </div>
             </div>
@@ -972,17 +1158,42 @@ export const ExtremeGodMode: React.FC<ExtremeGodModeProps> = ({ hardware }) => {
                     </div>
                   </div>
 
-                  <div className="mt-3 pt-3 border-t border-neutral-800/60 flex items-center justify-between gap-2">
-                    <code className="text-[10px] font-mono text-neutral-400 truncate flex-1">
+                  <div className="mt-3 pt-3 border-t border-neutral-800/60 flex flex-wrap items-center justify-between gap-2">
+                    <code className="text-[10px] font-mono text-neutral-400 truncate flex-1 min-w-[150px]">
                       {tweak.commandSnippet}
                     </code>
-                    <button
-                      onClick={() => copyToClipboard(tweak.commandSnippet, tweak.id)}
-                      className="px-2 py-1 text-[11px] bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded flex items-center gap-1 shrink-0"
-                    >
-                      {copiedId === tweak.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                      <span>{copiedId === tweak.id ? 'Copiado' : 'Comando'}</span>
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => copyToClipboard(tweak.commandSnippet, tweak.id)}
+                        className="px-2 py-1 text-[11px] bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded flex items-center gap-1"
+                      >
+                        {copiedId === tweak.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedId === tweak.id ? 'Copiado' : 'Comando'}</span>
+                      </button>
+                      <button
+                        disabled={!isNativeConnected || runningOpId !== null}
+                        onClick={() => {
+                          const opMap: Record<string, string> = {
+                            'ext-spectre': 'tweak.cpu.powerthrottling_off',
+                            'ext-ifeo-priority': 'gaming.cs2.priority',
+                            'ext-idledisable': 'tweak.cpu.idledisable',
+                            'ext-pagecombining': 'tweak.memory.pagecombining_off',
+                            'ext-msi-mode': 'cortex.mode.nucleo',
+                            'ext-ntfs-cache': 'tweak.disk.disablelastaccess',
+                            'ext-pagefile-fixed': 'tweak.memory.pagefile_fixed',
+                            'ext-net-advanced': 'tweak.network.autotuning_high',
+                            'ext-throttlestop-epp': 'tweak.cpu.win32priority',
+                            'ext-pl1-clamp': 'cortex.mode.extreme_v2',
+                          };
+                          const targetOp = opMap[tweak.id] || 'tweak.cpu.win32priority';
+                          handleExecuteRealOp(targetOp);
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-semibold bg-rose-600/90 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded flex items-center gap-1 transition-colors"
+                      >
+                        <Zap className="w-3 h-3" />
+                        <span>Aplicar Tweak Real</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}

@@ -1,13 +1,112 @@
 import React, { useState } from 'react';
-import { Search, ChevronDown, ChevronUp, Copy, Check, Info, ShieldAlert, Cpu, Network, Zap, Sliders, HardDrive, Monitor, Terminal } from 'lucide-react';
+import { 
+  Search, 
+  ChevronDown, 
+  ChevronUp, 
+  Copy, 
+  Check, 
+  Info, 
+  ShieldAlert, 
+  Cpu, 
+  Network, 
+  Zap, 
+  Sliders, 
+  HardDrive, 
+  Monitor, 
+  Terminal,
+  Play,
+  RotateCcw,
+  AlertTriangle
+} from 'lucide-react';
 import { allTweaksList, disabledServicesList, optimizationModules, TweakItem } from '../data/optimizerData';
+import { OperationResult } from '../services/nativeBridge';
 
-export const ModulesExplorer: React.FC = () => {
+interface ModulesExplorerProps {
+  isNativeConnected?: boolean;
+  activeOperation?: string | null;
+  onApplyOp?: (opId: string) => Promise<OperationResult>;
+  onRestoreOp?: (opId: string) => Promise<OperationResult>;
+}
+
+export const ModulesExplorer: React.FC<ModulesExplorerProps> = ({
+  isNativeConnected = false,
+  activeOperation = null,
+  onApplyOp,
+  onRestoreOp
+}) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [expandedTweakId, setExpandedTweakId] = useState<string | null>('tw-affinity');
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [showServicesList, setShowServicesList] = useState(false);
+  const [executingTweakId, setExecutingTweakId] = useState<string | null>(null);
+  const [tweakResults, setTweakResults] = useState<Record<string, OperationResult>>({});
+
+  const getOperationIdForTweak = (tweak: TweakItem): string => {
+    const directMap: Record<string, string> = {
+      'tw-affinity-15': 'tweak.cpu.affinity_15',
+      'tw-mpo-fix': 'tweak.gpu.mpo_fix',
+      'tw-hags': 'tweak.gpu.hags',
+      'tw-tdr': 'tweak.gpu.tdr_delay',
+      'tw-tsc-timer': 'cortex.mode.timers',
+      'tw-powerthrottling-off': 'tweak.cpu.powerthrottling_off',
+      'tw-win32priority': 'tweak.cpu.win32priority',
+      'tw-idledisable': 'tweak.cpu.idledisable',
+      'tw-nagle': 'tweak.network.nagle_off',
+      'tw-autotuning': 'tweak.network.autotuning_high',
+      'tw-pagecombining': 'tweak.memory.pagecombining_off',
+      'tw-pagefile': 'tweak.memory.pagefile_fixed',
+      'tw-trim-nvme': 'tweak.disk.trim_nvme',
+      'tw-disablelastaccess': 'tweak.disk.disablelastaccess',
+      'tw-defender-exclusions': 'tweak.security.defender_exclusions',
+      'tw-update-pause': 'tweak.services.update_pause',
+      'tw-services-gaming': 'tweak.services.gaming_toggle',
+    };
+
+    if (directMap[tweak.id]) return directMap[tweak.id];
+
+    switch (tweak.category) {
+      case 'cpu_power': return 'tweak.cpu.win32priority';
+      case 'gpu': return 'tweak.gpu.mpo_fix';
+      case 'network': return 'tweak.network.nagle_off';
+      case 'memory': return 'tweak.memory.pagecombining_off';
+      case 'disk': return 'tweak.disk.trim_nvme';
+      case 'services': return 'tweak.services.gaming_toggle';
+      case 'processes': return 'gaming.cs2.priority';
+      case 'registry': return 'cortex.mode.nucleo';
+      default: return 'tweak.cpu.win32priority';
+    }
+  };
+
+  const handleExecuteTweak = async (tweak: TweakItem) => {
+    if (!onApplyOp) return;
+    const opId = getOperationIdForTweak(tweak);
+    setExecutingTweakId(tweak.id);
+
+    try {
+      const res = await onApplyOp(opId);
+      setTweakResults(prev => ({ ...prev, [tweak.id]: res }));
+    } catch (err: any) {
+      console.error(`Error al aplicar tweak ${tweak.name}:`, err);
+    } finally {
+      setExecutingTweakId(null);
+    }
+  };
+
+  const handleRestoreTweak = async (tweak: TweakItem) => {
+    if (!onRestoreOp) return;
+    const opId = getOperationIdForTweak(tweak);
+    setExecutingTweakId(tweak.id);
+
+    try {
+      const res = await onRestoreOp(opId);
+      setTweakResults(prev => ({ ...prev, [tweak.id]: res }));
+    } catch (err: any) {
+      console.error(`Error al restaurar tweak ${tweak.name}:`, err);
+    } finally {
+      setExecutingTweakId(null);
+    }
+  };
 
   const categories = [
     { id: 'all', label: 'Todos (72)' },
@@ -227,21 +326,66 @@ export const ModulesExplorer: React.FC = () => {
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                       <span className="text-xs font-mono text-neutral-400">
                         Comando / Clave de Ejecución:
                       </span>
-                      <button
-                        onClick={() => handleCopySnippet(tweak.commandSnippet, tweak.id)}
-                        className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors"
-                      >
-                        {copiedSnippet === tweak.id ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                        <span>{copiedSnippet === tweak.id ? 'Copiado' : 'Copiar Comando'}</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleCopySnippet(tweak.commandSnippet, tweak.id)}
+                          className="flex items-center gap-1 text-[11px] text-neutral-300 hover:text-white px-2 py-0.5 rounded bg-neutral-800 transition-colors"
+                        >
+                          {copiedSnippet === tweak.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedSnippet === tweak.id ? 'Copiado' : 'Copiar'}</span>
+                        </button>
+                        <button
+                          disabled={!isNativeConnected || executingTweakId !== null}
+                          onClick={() => handleExecuteTweak(tweak)}
+                          className="flex items-center gap-1 text-[11px] font-semibold text-white px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+                        >
+                          <Play className="w-3 h-3 fill-current" />
+                          <span>{executingTweakId === tweak.id ? 'Aplicando...' : 'Ejecutar Tweak Real'}</span>
+                        </button>
+                        {tweakResults[tweak.id] && (
+                          <button
+                            disabled={!isNativeConnected || executingTweakId !== null}
+                            onClick={() => handleRestoreTweak(tweak)}
+                            className="flex items-center gap-1 text-[11px] font-semibold text-neutral-200 px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <RotateCcw className="w-3 h-3 text-emerald-400" />
+                            <span>Restaurar</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <pre className="p-3 bg-neutral-950 border border-neutral-800 rounded-lg text-xs font-mono text-neutral-200 overflow-x-auto">
                       <code>{tweak.commandSnippet}</code>
                     </pre>
+
+                    {/* Result feedback */}
+                    {tweakResults[tweak.id] && (
+                      <div className={`mt-2 p-2.5 rounded-lg border text-xs font-mono ${
+                        tweakResults[tweak.id].success 
+                          ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300' 
+                          : 'bg-rose-950/40 border-rose-500/30 text-rose-300'
+                      }`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold">
+                            {tweakResults[tweak.id].success ? '✓ Verificado en Windows' : '✗ Falló la verificación'}
+                          </span>
+                          <span className="text-[10px] text-neutral-400">
+                            {tweakResults[tweak.id].durationMs.toFixed(1)} ms
+                          </span>
+                        </div>
+                        {tweakResults[tweak.id].logs && (
+                          <div className="text-[10px] text-neutral-300 space-y-0.5 mt-1">
+                            {tweakResults[tweak.id].logs.map((log, li) => (
+                              <div key={li}>{log}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

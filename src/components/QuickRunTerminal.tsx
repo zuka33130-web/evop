@@ -41,60 +41,83 @@ interface FunctionNativeMapping {
   statusLabel: string;
   implementationNote?: string;
   canRestore?: boolean;
+  requiresConfirmation?: boolean;
+  confirmationMessage?: string;
 }
 
 export const functionNativeMappings: Record<string, FunctionNativeMapping> = {
   'f-bestia': {
-    operationId: 'gaming.cs2.priority',
+    operationId: 'cortex.mode.bestia',
     restoreOperationId: 'gaming.cs2.priority.restore',
     isImplemented: true,
-    statusLabel: 'Operación Real: Fijar Prioridad Alta CS2 con Respaldo',
+    statusLabel: 'Operación Real: Modo Bestia (Afinidad P-Cores Mask 15 + Prioridad Alta + Respaldo)',
     canRestore: true,
   },
   'f-torneo': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Regla de seguridad: La suite protege la estabilidad del sistema y no finaliza explorer.exe arbitrariamente.',
+    operationId: 'cortex.mode.torneo',
+    restoreOperationId: 'cortex.mode.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Modo Torneo (Suspensión DWM / Explorer con UAC)',
+    canRestore: true,
+    requiresConfirmation: true,
+    confirmationMessage: 'El Modo Torneo suspende temporalmente las transparencias de Windows y tareas secundarias para maximizar la VRAM disponible para la GPU integrada. ¿Confirmas la ejecución?'
   },
   'f-nucleo': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Programado para fase 2 con validación UAC y política de exclusiones de seguridad.',
+    operationId: 'cortex.mode.nucleo',
+    restoreOperationId: 'cortex.mode.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Modo Núcleo (Kernel Memory, Mitigaciones y Modo MSI)',
+    canRestore: true,
   },
   'f-timers': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Programado para fase 2: configuración BCDedit nativa con verificación TSC.',
+    operationId: 'cortex.mode.timers',
+    restoreOperationId: 'cortex.mode.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Temporizadores TSC de Alta Precisión (BCDedit)',
+    canRestore: true,
   },
   'f-gpu': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Programado para fase 2: ajuste de registro HAGS y MPO con backup previo.',
+    operationId: 'cortex.mode.gpu',
+    restoreOperationId: 'cortex.mode.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Optimización GPU Intel UHD (HAGS, MPO Fix y TDR Delay)',
+    canRestore: true,
   },
   'f-stutter': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Programado para fase 2: purga de Standby List vía API de memoria Windows.',
+    operationId: 'cortex.mode.stutter',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Purga de Standby List y Working Sets de Memoria',
+    canRestore: false,
   },
   'f-red': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Programado para fase 2: TcpAckFrequency y TCPNoDelay con restauración de red.',
+    operationId: 'cortex.mode.network',
+    restoreOperationId: 'cortex.mode.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Red de Baja Latencia (Nagle OFF, TCPNoDelay, AutoTuning)',
+    canRestore: true,
   },
   'f-debloat': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Programado para fase 2: desinstalación de paquetes UWP con lista blanca segura.',
+    operationId: 'cortex.mode.debloat',
+    restoreOperationId: 'cortex.mode.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Debloat Seguro de Windows (Apps UWP y Telemetría)',
+    canRestore: true,
   },
   'f-servicios': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Programado para fase 2: gestor de perfiles de servicios con snapshot original.',
+    operationId: 'cortex.mode.services',
+    restoreOperationId: 'cortex.mode.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Perfil de Servicios Gaming con Snapshot y UAC',
+    canRestore: true,
   },
   'f-vbs': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Programado para fase 3: alternador VBS con confirmación y reinicio.',
+    operationId: 'cortex.mode.vbs',
+    restoreOperationId: 'cortex.mode.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Alternador VBS / HVCI con Confirmación y Reinicio',
+    canRestore: true,
+    requiresConfirmation: true,
+    confirmationMessage: 'Modificar el estado de Seguridad Basada en Virtualización (VBS/HVCI) requiere privilegios administrativos y reiniciar Windows. ¿Deseas continuar?'
   },
   'f-limpieza': {
     operationId: 'system.temp.cleanup',
@@ -115,14 +138,15 @@ export const functionNativeMappings: Record<string, FunctionNativeMapping> = {
     canRestore: false,
   },
   'f-cfg': {
-    isImplemented: false,
-    statusLabel: 'Pendiente de integración',
-    implementationNote: 'Disponible en la pestaña "CS2 CFG & Video" (generación directa de autoexec.cfg y video.txt).',
+    operationId: 'cortex.mode.cfg',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Despliegue de Autoexec Competitivo y Config Source 2',
+    canRestore: false,
   },
   'f-restore': {
-    operationId: 'gaming.cs2.priority.restore',
+    operationId: 'cortex.mode.restore',
     isImplemented: true,
-    statusLabel: 'Operación Real: Restauración de Prioridad Original desde Respaldo',
+    statusLabel: 'Operación Real: Restauración Integral de Valores Originales',
     canRestore: false,
   },
 };
@@ -172,6 +196,14 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({
         `[REGLA 5] Por seguridad, las operaciones sobre el sistema Windows requieren el motor local en tu máquina.`
       ]);
       return;
+    }
+
+    if (mapping.requiresConfirmation) {
+      const confirmed = window.confirm(mapping.confirmationMessage || `¿Confirmas ejecutar la operación '${mapping.operationId}'?`);
+      if (!confirmed) {
+        setTerminalLogs([`[CANCELADO] Operación '${mapping.operationId}' cancelada por el usuario.`]);
+        return;
+      }
     }
 
     setIsExecuting(true);

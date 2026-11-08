@@ -94,6 +94,25 @@ export interface OperationCatalogItem {
   requiresElevation: boolean;
   canRestore: boolean;
   isImplemented: boolean;
+  requiresConfirmation?: boolean;
+  confirmationMessage?: string | null;
+}
+
+export interface RealtimeTelemetryData {
+  timestampUtc: string;
+  timeString: string;
+  cpuUsagePct: number;
+  cpuClockPct: number;
+  cpuClockMhz: number;
+  gpuUsagePct: number;
+  ramFreeMb: number;
+  ramTotalMb: number;
+  ramUsedPct: number;
+  temperatureCelsius: number;
+  throttlingStatus: string;
+  telemetrySource: string;
+  isCs2Running: boolean;
+  cs2ProcessId: number | null;
 }
 
 export interface OperationResult {
@@ -296,6 +315,35 @@ export async function fetchOperationStatus(operationId: string, baseUrl = DEFAUL
 }
 
 /**
+ * Obtiene telemetría de hardware en tiempo real desde el motor C# (WMI / ACPI Win32)
+ */
+export async function fetchRealtimeTelemetry(baseUrl = DEFAULT_NATIVE_ENGINE_URL): Promise<RealtimeTelemetryData> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+  try {
+    const res = await fetch(`${baseUrl}/api/telemetry/realtime`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      throw new Error(`Error ${res.status} al consultar telemetría en tiempo real: ${res.statusText}`);
+    }
+
+    return await res.json();
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Tiempo de espera agotado al consultar telemetría.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Hook de React para gestionar la conexión, diagnósticos y operaciones del motor C# en tiempo real
  */
 export function useNativeBridge(baseUrl = DEFAULT_NATIVE_ENGINE_URL) {
@@ -436,6 +484,7 @@ export function useNativeBridge(baseUrl = DEFAULT_NATIVE_ENGINE_URL) {
     applyOp,
     restoreOp,
     getOpStatus,
+    fetchTelemetry: () => fetchRealtimeTelemetry(baseUrl),
     isConnected: connectionStatus === 'connected',
   };
 }

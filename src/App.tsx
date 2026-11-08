@@ -51,7 +51,8 @@ export default function App() {
     isConnected,
     activeOperation,
     applyOp,
-    restoreOp
+    restoreOp,
+    fetchTelemetry
   } = useNativeBridge();
 
   const handleApplyRealHardware = (diag: SystemHardwareReport) => {
@@ -338,7 +339,14 @@ export default function App() {
 
         {/* Tab: Fase 2 & 3 God Mode */}
         {activeTab === 'godmode' && (
-          <ExtremeGodMode hardware={hardware} />
+          <ExtremeGodMode 
+            hardware={hardware}
+            isNativeConnected={isConnected}
+            activeOperation={activeOperation}
+            onApplyOp={applyOp}
+            onRestoreOp={restoreOp}
+            fetchTelemetry={fetchTelemetry}
+          />
         )}
 
         {/* Tab 2: 15 Modos Cortex */}
@@ -354,7 +362,12 @@ export default function App() {
 
         {/* Tab 3: 110 Tweaks Explorer */}
         {activeTab === 'tweaks' && (
-          <ModulesExplorer />
+          <ModulesExplorer 
+            isNativeConnected={isConnected}
+            activeOperation={activeOperation}
+            onApplyOp={applyOp}
+            onRestoreOp={restoreOp}
+          />
         )}
 
         {/* Tab 4: FPS Calculator */}

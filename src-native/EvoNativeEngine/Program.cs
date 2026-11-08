@@ -173,6 +173,13 @@ app.MapGet("/api/operations/{id}/status", async (string id, IOptimizationService
     return Results.Ok(status);
 });
 
+// Telemetría en tiempo real desde Windows
+app.MapGet("/api/telemetry/realtime", async (IOptimizationService ops) =>
+{
+    var telemetry = await ops.GetRealtimeTelemetryAsync();
+    return Results.Ok(telemetry);
+});
+
 // Endpoint raíz informativo
 app.MapGet("/", () => Results.Json(new
 {
