@@ -97,6 +97,7 @@ public class SecurityService : ISecurityService
     public SecurityService(ILogger<SecurityService> logger)
     {
         _logger = logger;
+        _whitelistedActions.UnionWith(OptimizationLibrary.Definitions.Keys);
     }
 
     public bool IsElevated()

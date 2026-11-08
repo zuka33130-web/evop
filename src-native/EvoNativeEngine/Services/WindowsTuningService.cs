@@ -79,7 +79,7 @@ public sealed class WindowsTuning : IWindowsTuning
 public sealed class WindowsTuningService(IBackupManager backups, IWindowsTuning windows)
 {
     public sealed record Snapshot(int Version, string Operation, Dictionary<string, bool> Values);
-    private static readonly SemaphoreSlim Gate = new(1, 1);
+    private static readonly SemaphoreSlim Gate = LibraryOptimizationService.Gate;
     // Deliberately excludes Update, Defender, printing, search, network and system services.
     private static readonly string[] OptionalServices = ["DiagTrack", "MapsBroker"];
     public bool Supports(string id) => id is "tweak.memory.pagecombining_off" or "cortex.mode.stutter"
@@ -98,6 +98,8 @@ public sealed class WindowsTuningService(IBackupManager backups, IWindowsTuning 
         try
         {
             if (!Supports(id)) throw new NotSupportedException(id);
+            if (!memory && !restore && (backups.HasBackup(LibraryOptimizationService.BackupKey("library.service.maps")) || backups.HasBackup(LibraryOptimizationService.BackupKey("library.service.diagnostics"))))
+                throw new IOException("Restaura primero los módulos individuales de servicios para no solapar respaldos.");
             before = memory ? new() { ["PageCombining"] = await windows.ReadPageCombiningAsync() } : ReadServices();
             if (before.Count == 0) throw new NotSupportedException("No se encontraron los servicios opcionales en este equipo.");
             Snapshot original;

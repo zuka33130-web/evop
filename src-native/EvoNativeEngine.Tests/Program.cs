@@ -1,4 +1,5 @@
 using EvoNativeEngine.Services;
+using EvoNativeEngine.Models;
 using System.Text.Json;
 
 static void Assert(bool value, string message)
@@ -217,6 +218,56 @@ var measuredIntervals = new[] { 10d, 20d, 30d };
 Assert(Math.Abs(FrameBenchmarkService.Calculate(measuredIntervals, 60).AverageFps - 50) < .000001, "Average FPS equals frame intervals / measured time, not average of reciprocal intervals");
 Console.WriteLine("PASS: FPS formula and timeline bins are deterministic over measured intervals.");
 
+// All new actions execute through a typed provider; these fixtures never modify Windows.
+Assert(OptimizationLibrary.Definitions.Count >= 50, "At least fifty distinct new native actions");
+Assert(OptimizationLibrary.Definitions.Values.Select(d => (d.Kind,d.Hive,d.Path,d.ValueName)).Distinct().Count() == OptimizationLibrary.Definitions.Count, "Do not count duplicate aliases as independent optimizations");
+var librarySecurity = new FakeLibrarySecurity();
+foreach (var definition in OptimizationLibrary.Definitions.Values)
+{
+    var store = new MemoryBackups(); var backend = new FakeLibraryBackend();
+    var service = new LibraryOptimizationService(store, librarySecurity, backend);
+    var originalValue = backend.Read(definition);
+    Assert((await service.ExecuteAsync(definition.Id, false)).Success, "Native library apply " + definition.Id);
+    Assert((await service.ExecuteAsync(definition.Id, false)).Success, "Native library reapply " + definition.Id);
+    Assert((await service.ExecuteAsync(definition.Id, true)).Success && backend.Read(definition, originalValue.Context) == originalValue, "Native library exact restore " + definition.Id);
+    Assert(!(await service.ExecuteAsync(definition.Id, true)).Success, "Missing backup is not guessed " + definition.Id);
+}
+var errorBackups = new MemoryBackups(); var errorBackend = new FakeLibraryBackend { IgnoreWrites = true };
+var errorLibrary = new LibraryOptimizationService(errorBackups, librarySecurity, errorBackend);
+Assert(!(await errorLibrary.ExecuteAsync("library.gaming.game_mode", false)).Success && errorBackups.HasBackup(LibraryOptimizationService.BackupKey("library.gaming.game_mode")), "Keep original backup on readback failure");
+errorBackend.IgnoreWrites = false;
+Assert((await errorLibrary.ExecuteAsync("library.gaming.game_mode", true)).Success, "Retry recovery after library failure");
+var powerDefinition = OptimizationLibrary.Definitions["library.power.epp"];
+var schemeBackups = new MemoryBackups(); var schemeBackend = new FakeLibraryBackend();
+var schemeLibrary = new LibraryOptimizationService(schemeBackups, librarySecurity, schemeBackend);
+var initialScheme = schemeBackend.Scheme;
+Assert((await schemeLibrary.ExecuteAsync(powerDefinition.Id, false)).Success, "Power setting applies to original scheme");
+schemeBackend.Scheme = Guid.NewGuid().ToString();
+Assert(!(await schemeLibrary.ExecuteAsync(powerDefinition.Id, false)).Success, "No redirect to a different plan");
+Assert((await schemeLibrary.ExecuteAsync(powerDefinition.Id, true)).Success && schemeBackend.Scheme != initialScheme, "Restoring old plan must not switch unrelated active plan");
+librarySecurity.Elevated = false;
+Assert(!(await new LibraryOptimizationService(new MemoryBackups(), librarySecurity, new FakeLibraryBackend()).ExecuteAsync("library.power.epp", false)).Success, "Admin actions denied before write");
+librarySecurity.Elevated = true;
+Assert(!WindowsOptionalApplications.AllowedName("steam") && !WindowsOptionalApplications.AllowedName("cs2") && !WindowsOptionalApplications.AllowedName("svchost") && WindowsOptionalApplications.AllowedName("chrome"), "Beast allowlist protects dependencies");
+var workflowBackups = new MemoryBackups(); var workflowOps = new FakeWorkflowOperations();
+var workflowTemplates = new OptimizationTemplateService(workflowOps, workflowBackups, librarySecurity);
+var optionalApps = new FakeOptionalApplications();
+var beast = new BeastSessionService(optionalApps, workflowOps, workflowTemplates, workflowBackups, new OperationJournal());
+var beastPlan = beast.Preview();
+var beastResult = await beast.StartAsync(new(beastPlan.Id, [], false, false, true, "INICIAR MODO BESTIA"));
+Assert(beastResult.Finished && optionalApps.Closed == 0 && workflowOps.Applied.SequenceEqual(new[] { "gaming.cs2.launch", "gaming.cs2.priority" }), "Beast closes nothing by default and uses only launch/High without affinity");
+var replayDenied = false;
+try { await beast.StartAsync(new(beastPlan.Id, [], false, false, false, "INICIAR MODO BESTIA")); } catch (ArgumentException) { replayDenied = true; }
+Assert(replayDenied, "Beast preview cannot be replayed");
+var packageProvider = new FakeOptionalPackages();
+var debloat = new DebloatService(packageProvider, new MemoryBackups(), new OperationJournal());
+var packagePlan = JsonSerializer.SerializeToElement(await debloat.PreviewAsync()).GetProperty("Plan");
+Assert(packagePlan.GetProperty("Candidates").GetArrayLength() == 1, "Debloat excludes Store even if provider returns it");
+var packageReceipt = await debloat.RemoveAsync(new(packagePlan.GetProperty("Id").GetGuid(), ["Microsoft.BingNews"], "DESINSTALAR APLICACIONES"));
+Assert(packageReceipt.Results.All(r => r.Success) && (await packageProvider.ListAsync()).All(p => p.Name != "Microsoft.BingNews"), "Optional package removal verified");
+Assert((await debloat.RestoreAsync(packageReceipt.Id)).Results.Last().Success, "Optional package restore verified without claiming data recovery");
+Console.WriteLine($"PASS: {OptimizationLibrary.Definitions.Count} new actions, exact backups, permissions, plan isolation, Beast dependencies and Appx allowlist.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();
@@ -270,4 +321,50 @@ sealed class FakeGameProvider : IGameProcessProvider, IGameProcess
     public void SetPriority(System.Diagnostics.ProcessPriorityClass priority) { if (!IgnoreWrites) State = State with { Priority = priority }; }
     public void SetAffinity(long mask) { if (!IgnoreWrites) State = State with { Affinity = mask }; }
     public void Dispose() { }
+}
+
+sealed class FakeLibrarySecurity : ISecurityService
+{
+    public bool Elevated = true;
+    public bool IsElevated() => Elevated;
+    public bool ValidateWhitelistedAction(string id) => true;
+    public bool IsCriticalProcess(string name) => false;
+    public bool IsCriticalService(string name) => false;
+    public IReadOnlySet<string> AllowedActions => new HashSet<string>();
+}
+sealed class FakeLibraryBackend : ILibraryBackend
+{
+    public string Scheme = Guid.NewGuid().ToString();
+    public bool IgnoreWrites;
+    private readonly Dictionary<string,LibraryValue> values = new();
+    public LibraryValue Read(LibraryDefinition d, string? context = null)
+    {
+        var key = d.Id + (d.Kind == "Power" ? context ?? Scheme : "");
+        return values.GetValueOrDefault(key) ?? new(true, d.Kind, d.Kind == "Service" ? "1" : d.Kind == "RegistryString" ? "original text" : "17", d.Kind == "Power" ? context ?? Scheme : null);
+    }
+    public void Write(LibraryDefinition d, LibraryValue value) { if (!IgnoreWrites) values[d.Id + (d.Kind == "Power" ? value.Context : "")] = value; }
+}
+sealed class FakeOptionalApplications : IOptionalApplications
+{
+    public int Closed;
+    public OptionalProcess[] Scan() => [new(42, 123456, "chrome", @"C:\Apps\chrome.exe", 200)];
+    public Task<ClosedApplication> CloseAsync(OptionalProcess p, bool force) { Closed++; return Task.FromResult(new ClosedApplication(p.Pid,p.Name,"closed",true)); }
+}
+sealed class FakeWorkflowOperations : IOptimizationService
+{
+    public List<string> Applied = [];
+    public Task<OperationResult> ApplyOperationAsync(string id) { Applied.Add(id); return Task.FromResult(new OperationResult(true,id,"apply",DateTime.UtcNow,0,[],null,null,null,false)); }
+    public Task<OperationResult> RestoreOperationAsync(string id) => Task.FromResult(new OperationResult(true,id,"restore",DateTime.UtcNow,0,[],null,null,null,true));
+    public Task<OperationResult> RestoreVerifiedAsync() => RestoreOperationAsync("all");
+    public Task<IReadOnlyList<OperationCatalogItem>> GetCatalogAsync() => Task.FromResult<IReadOnlyList<OperationCatalogItem>>([]);
+    public Task<IReadOnlyList<OperationHistoryItem>> GetHistoryAsync() => Task.FromResult<IReadOnlyList<OperationHistoryItem>>([]);
+    public Task<OperationStatusResponse> GetOperationStatusAsync(string id) => Task.FromResult(new OperationStatusResponse(id,true,true,false,null,new Cs2ProcessState(true,123,"Normal",10,100,DateTime.UtcNow,"test"),null));
+    public Task<RealtimeTelemetryData> GetRealtimeTelemetryAsync() => throw new NotSupportedException();
+}
+sealed class FakeOptionalPackages : IOptionalPackages
+{
+    private List<PackageState> states = [new("Microsoft.BingNews","news_1",@"C:\Program Files\WindowsApps\news_1",false,false),new("Microsoft.WindowsStore","store_1",@"C:\Program Files\WindowsApps\store_1",false,false)];
+    public Task<PackageState[]> ListAsync() => Task.FromResult(states.ToArray());
+    public Task RemoveAsync(PackageState p) { states.Remove(p); return Task.CompletedTask; }
+    public Task RestoreAsync(PackageState p) { states.Add(p); return Task.CompletedTask; }
 }

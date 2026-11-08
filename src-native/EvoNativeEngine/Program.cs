@@ -50,6 +50,11 @@ builder.Services.AddSingleton<BenchmarkSessionService>();
 builder.Services.AddSingleton<OptimizationExperimentService>();
 builder.Services.AddSingleton<SmartCleanupService>();
 builder.Services.AddSingleton<LocalAuditAdvisor>();
+builder.Services.AddSingleton<OptimizationTemplateService>();
+builder.Services.AddSingleton<IOptionalApplications, WindowsOptionalApplications>();
+builder.Services.AddSingleton<BeastSessionService>();
+builder.Services.AddSingleton<IOptionalPackages, WindowsOptionalPackages>();
+builder.Services.AddSingleton<DebloatService>();
 
 // CORS: Permitir exclusivamente solicitudes de clientes locales (Vite dev server, Tauri, etc.)
 builder.Services.AddCors(options =>
@@ -351,6 +356,42 @@ app.MapPost("/api/recovery/cs2-expired", async (IBackupManager backups) =>
 {
     try { return Results.Ok(new { message = await new GameOptimizationService(backups, new WindowsGameProcessProvider()).RetireExpiredAsync() }); }
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapGet("/api/library", () => Results.Ok(OptimizationLibrary.Definitions.Values));
+app.MapGet("/api/templates", () => Results.Ok(OptimizationTemplateService.Templates));
+app.MapGet("/api/templates/receipts", async (OptimizationTemplateService service) => Results.Ok(await service.ReceiptsAsync()));
+app.MapGet("/api/templates/{id}/preview", async (string id, OptimizationTemplateService service) =>
+{
+    try { return Results.Ok(await service.PreviewAsync(id)); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/templates/{id}/apply", async (string id, TemplateRequest request, OptimizationTemplateService service) =>
+{
+    try { return Results.Ok(await service.ApplyAsync(id, request)); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/templates/receipts/{id:guid}/restore", async (Guid id, OptimizationTemplateService service) =>
+{
+    try { return Results.Ok(await service.RestoreAsync(id)); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/beast/preview", (BeastSessionService service) =>
+{
+    try { return Results.Ok(service.Preview()); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/beast/start", async (BeastRequest request, BeastSessionService service) =>
+{
+    try { return Results.Ok(await service.StartAsync(request)); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/debloat/preview", async (DebloatService service) =>
+{
+    try { return Results.Ok(await service.PreviewAsync()); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/debloat/remove", async (DebloatRequest request, DebloatService service) =>
+{
+    try { return Results.Ok(await service.RemoveAsync(request)); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/debloat/restore/{id:guid}", async (Guid id, DebloatService service) =>
+{
+    try { return Results.Ok(await service.RestoreAsync(id)); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 
 // Endpoint raíz informativo en modo API; en escritorio se sirve React desde wwwroot.

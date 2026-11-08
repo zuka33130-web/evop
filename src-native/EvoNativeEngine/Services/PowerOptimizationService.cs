@@ -49,7 +49,7 @@ public sealed class PowerOptimizationService(IBackupManager backups, IPowerSetti
     // A versioned key prevents old guessed snapshots from being interpreted as real state.
     public sealed record Snapshot(int Version, string Operation, Guid Scheme, uint? IdleAc);
     private static readonly Guid HighPerformance = new("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
-    private static readonly SemaphoreSlim Gate = new(1, 1);
+    private static readonly SemaphoreSlim Gate = LibraryOptimizationService.Gate;
     public bool Supports(string id) => id is "cortex.mode.nucleo" or "tweak.cpu.idledisable";
 
     public async Task<OperationResult> ExecuteAsync(string id, bool restore)

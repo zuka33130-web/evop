@@ -36,6 +36,8 @@ public class OptimizationService : IOptimizationService
 
     private PowerOptimizationService PowerOperations => new(_backupManager, new WindowsPowerSettings());
 
+    private LibraryOptimizationService LibraryOperations => new(_backupManager, _securityService, new WindowsLibraryBackend());
+
     private RegistryOptimizationService RegistryOperations => new(_backupManager, _securityService);
 
     private readonly ConcurrentBag<OperationHistoryItem> _history = new();
@@ -104,6 +106,7 @@ public class OptimizationService : IOptimizationService
         IBackupManager backupManager,
         IDiagnosticsService diagnosticsService, OperationJournal journal)
     {
+        foreach (var definition in OptimizationLibrary.Definitions.Values) _catalog.Add(definition.Id, definition.Catalog);
         _journal = journal;
         _logger = logger;
         _securityService = securityService;
@@ -154,12 +157,12 @@ public class OptimizationService : IOptimizationService
             .Select(item => item with { CanRestore = HasVerifiedRestore(item.Id),
                 IsImplemented = item.IsImplemented && !PendingReview.Contains(item.Id),
                 IsReadOnly = item.Id is "system.hardware.refresh" or "system.processes.list" or "gaming.cs2.detect" or "cortex.mode.watchdog" or "cortex.mode.bench" or "telemetry.realtime",
-                RequiresRestart = item.Id.StartsWith("tweak.gpu.") || item.Id is "cortex.mode.gpu" or "tweak.cpu.win32priority" or "tweak.cpu.powerthrottling_off",
+                RequiresRestart = item.RequiresRestart || item.Id.StartsWith("tweak.gpu.") || item.Id is "cortex.mode.gpu" or "tweak.cpu.win32priority" or "tweak.cpu.powerthrottling_off",
                 AvailabilityReason = PendingReview.Contains(item.Id) ? "Sin implementación verificable/reversión en este motor, o reemplazado por un flujo específico. No ejecutar scripts heredados como sustituto." : null,
                 RequiresElevation = item.RequiresElevation || item.Id is "cortex.mode.gpu" or "cortex.mode.extreme_v2" or "cortex.mode.iniciar_todo" }).ToList());
     }
 
-    private bool HasVerifiedRestore(string id) => Presets.ContainsKey(id) || RegistryOperations.Supports(id) || PowerOperations.Supports(id) || TuningOperations.Supports(id)
+    private bool HasVerifiedRestore(string id) => OptimizationLibrary.Definitions.ContainsKey(id) || Presets.ContainsKey(id) || RegistryOperations.Supports(id) || PowerOperations.Supports(id) || TuningOperations.Supports(id)
         || id is "gaming.cs2.priority" or "cortex.mode.bestia" or "tweak.cpu.affinity_15";
 
     public async Task<OperationResult> ApplyOperationAsync(string operationId)
@@ -196,7 +199,8 @@ public class OptimizationService : IOptimizationService
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("El motor de optimización requiere Windows.");
             if (_catalog.TryGetValue(operationId, out var entry) && (entry.RequiresElevation || operationId is "cortex.mode.gpu" or "cortex.mode.extreme_v2" or "cortex.mode.iniciar_todo") && !_securityService.IsElevated())
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
-            OperationResult result = Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, false)
+            OperationResult result = OptimizationLibrary.Definitions.ContainsKey(operationId) ? await LibraryOperations.ExecuteAsync(operationId, false)
+                : Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, false)
                 : GameOperations.Supports(operationId) ? await GameOperations.ExecuteAsync(operationId, false)
                 : RegistryOperations.Supports(operationId)
                 ? await RegistryOperations.ExecuteAsync(operationId, false)
@@ -305,7 +309,8 @@ public class OptimizationService : IOptimizationService
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("El motor de optimización requiere Windows.");
             if (_catalog.TryGetValue(operationId, out var entry) && (entry.RequiresElevation || operationId is "cortex.mode.gpu" or "cortex.mode.extreme_v2" or "cortex.mode.iniciar_todo") && !_securityService.IsElevated())
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
-            OperationResult result = Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, true)
+            OperationResult result = OptimizationLibrary.Definitions.ContainsKey(operationId) ? await LibraryOperations.ExecuteAsync(operationId, true)
+                : Presets.ContainsKey(operationId) ? await ExecutePresetAsync(operationId, true)
                 : GameOperations.Supports(operationId) ? await GameOperations.ExecuteAsync(operationId, true)
                 : RegistryOperations.Supports(operationId)
                 ? await RegistryOperations.ExecuteAsync(operationId, true)
@@ -359,7 +364,7 @@ public class OptimizationService : IOptimizationService
             "cortex.mode.torneo", "tweak.gpu.mpo_fix", "tweak.gpu.hags", "tweak.gpu.tdr_delay",
             "tweak.cpu.powerthrottling_off", "tweak.cpu.win32priority", "tweak.cpu.idledisable", "cortex.mode.nucleo"];
         var results = new List<OperationResult>();
-        foreach (var id in ids)
+        foreach (var id in OptimizationLibrary.Definitions.Keys.Reverse().Concat(ids))
             if ((await GetOperationStatusAsync(id)).HasBackup) results.Add(await RestoreOperationAsync(id));
         var success = results.All(r => r.Success);
         return new(success, "restore.verified", "restore", DateTime.UtcNow, timer.Elapsed.TotalMilliseconds,
@@ -378,6 +383,7 @@ public class OptimizationService : IOptimizationService
         bool isImplemented = _catalog.TryGetValue(operationId, out var item) && item.IsImplemented && !PendingReview.Contains(operationId);
         bool canRestore = isImplemented && HasVerifiedRestore(operationId);
         bool hasBackup = _backupManager.HasBackup(
+            OptimizationLibrary.Definitions.ContainsKey(operationId) ? LibraryOptimizationService.BackupKey(operationId) :
             GameOperations.Supports(operationId) ? GameOptimizationService.BackupKey :
             TuningOperations.Supports(operationId) ? $"verified.v1.{TuningOperations.CanonicalId(operationId)}" :
             PowerOperations.Supports(operationId) || RegistryOperations.Supports(operationId)
