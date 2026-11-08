@@ -113,6 +113,29 @@ catch (ArgumentException) { rejectedContext = true; }
 Assert(rejectedContext, "Never compare incompatible scene contexts");
 Console.WriteLine("PASS: CSV validation, warmup, exact fixture metrics, percentile definition, stable candidate ranking, duplicate and context rejection.");
 
+var control = Enumerable.Range(0, 5).Select(i => benchmark with { Id = Guid.NewGuid(), SourceSha256 = "control" + i }).ToArray();
+var improved = Enumerable.Range(0, 5).Select(i => benchmark with {
+    Id = Guid.NewGuid(), SourceSha256 = "improved" + i,
+    Metrics = benchmark.Metrics with { OnePercentLowFps = 30, AverageFps = 30, P99Ms = 33 }
+}).ToArray();
+Assert(BeforeAfterAnalyzer.Analyze(control, improved, true).Verdict == "Señal de mejora", "Detect run-level improvement with stable tails");
+Assert(BeforeAfterAnalyzer.Analyze(control, improved, false).Verdict == "Inconcluso", "Imported or confounded experiment cannot claim a verified effect");
+Assert(BeforeAfterAnalyzer.Analyze(control.Take(3).ToArray(), improved.Take(3).ToArray(), true).Verdict == "Inconcluso", "Too few runs stay inconclusive");
+var unchanged = control.Select((r, i) => r with { Id = Guid.NewGuid(), SourceSha256 = "unchanged" + i }).ToArray();
+Assert(BeforeAfterAnalyzer.Analyze(control, unchanged, true).Verdict == "Sin cambio relevante observado", "No invented improvement");
+var regressed = improved.Select((r, i) => r with { SourceSha256 = "regressed" + i,
+    Metrics = r.Metrics with { OnePercentLowFps = 20, P99Ms = 50 } }).ToArray();
+Assert(BeforeAfterAnalyzer.Analyze(control, regressed, true).Verdict == "Señal de regresión", "Regression despite possible average FPS improvement");
+var changedResolution = improved.Select(r => r with { Width = 1920 }).ToArray();
+var contextRejected = false;
+try { BeforeAfterAnalyzer.Analyze(control, changedResolution, true); }
+catch (ArgumentException) { contextRejected = true; }
+Assert(contextRejected, "Cannot attribute resolution change to a system tweak");
+var revisionJournal = new OperationJournal();
+Parallel.For(0, 100, _ => revisionJournal.Touch());
+Assert(revisionJournal.Revision == 100, "Concurrent operation revision tracking");
+Console.WriteLine("PASS: A/B improvement, unchanged, regression, inconclusive data/provenance, context validation and revision counter.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();

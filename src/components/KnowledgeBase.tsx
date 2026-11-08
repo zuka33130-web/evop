@@ -1,3 +1,4 @@
+import { ResearchSources } from './ResearchSources';
 import React, { useState } from 'react';
 import { 
   BookOpen, 
@@ -29,6 +30,7 @@ export const KnowledgeBase: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fadeIn text-neutral-100">
+      <ResearchSources />
       {/* Header Forense */}
       <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-6 relative overflow-hidden shadow-2xl">
         <div className="absolute top-0 right-0 w-80 h-80 bg-rose-500/5 rounded-full blur-3xl pointer-events-none" />

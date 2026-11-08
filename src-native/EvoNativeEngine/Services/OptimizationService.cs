@@ -23,6 +23,7 @@ public interface IOptimizationService
 
 public class OptimizationService : IOptimizationService
 {
+    private readonly OperationJournal _journal;
     private readonly ILogger<OptimizationService> _logger;
     private readonly ISecurityService _securityService;
     private readonly IBackupManager _backupManager;
@@ -100,8 +101,9 @@ public class OptimizationService : IOptimizationService
         ILogger<OptimizationService> logger,
         ISecurityService securityService,
         IBackupManager backupManager,
-        IDiagnosticsService diagnosticsService)
+        IDiagnosticsService diagnosticsService, OperationJournal journal)
     {
+        _journal = journal;
         _logger = logger;
         _securityService = securityService;
         _backupManager = backupManager;
@@ -157,6 +159,7 @@ public class OptimizationService : IOptimizationService
 
     public async Task<OperationResult> ApplyOperationAsync(string operationId)
     {
+        _journal.Touch();
         var sw = Stopwatch.StartNew();
         var logs = new List<string>();
         DateTime startedAt = DateTime.UtcNow;
@@ -266,6 +269,7 @@ public class OptimizationService : IOptimizationService
 
     public async Task<OperationResult> RestoreOperationAsync(string operationId)
     {
+        _journal.Touch();
         var sw = Stopwatch.StartNew();
         var logs = new List<string>();
         DateTime startedAt = DateTime.UtcNow;

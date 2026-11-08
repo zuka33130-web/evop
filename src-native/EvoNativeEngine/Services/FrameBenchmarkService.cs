@@ -1,3 +1,4 @@
+using EvoNativeEngine.Models;
 using Microsoft.VisualBasic.FileIO;
 using System.Globalization;
 
@@ -10,7 +11,7 @@ public sealed record FrameMetrics(int Frames, int RejectedRows, double Seconds, 
     double P999Ms, double BudgetMissPercent, double StutterPercent, double CoefficientOfVariation);
 public sealed record BenchmarkRun(Guid Id, DateTime CreatedUtc, string ProcessName, string Scenario,
     string Configuration, int Width, int Height, int FpsCap, int TargetFps, FrameMetrics Metrics,
-    string SourceColumn, List<string> Warnings, string SourceSha256);
+    string SourceColumn, List<string> Warnings, string SourceSha256, string Provenance = "ImportedCsv", long? OperationRevision = null, DateTime? CaptureStartedUtc = null, RealtimeTelemetryData[]? SystemSamples = null);
 public sealed record RankedConfiguration(string Configuration, int Width, int Height, int FpsCap, int Runs,
     double MedianLowFps, double MedianP99Ms, double MedianBudgetMissPercent, bool MeetsTarget, bool Provisional);
 public sealed record BenchmarkComparison(List<RankedConfiguration> Rankings, string Decision, string Definition);

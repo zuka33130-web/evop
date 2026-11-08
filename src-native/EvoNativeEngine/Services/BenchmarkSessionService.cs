@@ -5,8 +5,9 @@ namespace EvoNativeEngine.Services;
 
 public sealed record CaptureRequest(string ProcessName, string Scenario, string Configuration,
     int Width, int Height, int FpsCap, int TargetFps, int Seconds = 60);
-public sealed class BenchmarkSessionService
+public sealed class BenchmarkSessionService(OperationJournal journal, IOptimizationService operations)
 {
+    public BenchmarkRun Get(Guid id) => runs.TryGetValue(id, out var run) ? run : throw new ArgumentException("Captura expirada o desconocida.");
     private readonly ConcurrentDictionary<Guid, BenchmarkRun> runs = new();
     private readonly SemaphoreSlim captureGate = new(1, 1);
     public BenchmarkRun Import(BenchmarkInput input)
@@ -49,7 +50,13 @@ public sealed class BenchmarkSessionService
             foreach (var arg in new[] { "--process_name", request.ProcessName, "--output_file", file,
                 "--timed", request.Seconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 "--terminate_after_timed", "--no_console_stats" }) process.StartInfo.ArgumentList.Add(arg);
+            var startRevision = journal.Revision;
+            var startedUtc = DateTime.UtcNow;
             process.Start();
+            using var sampleCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var sampleTask = SampleAsync(sampleCancellation.Token);
+            try
+            {
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -61,13 +68,21 @@ public sealed class BenchmarkSessionService
                 await process.WaitForExitAsync();
                 throw new InvalidOperationException("Captura cancelada o agotada; no se genera un resultado ficticio.");
             }
+            sampleCancellation.Cancel();
+            var systemSamples = await sampleTask;
             var error = await stderr;
             await stdout;
             if (process.ExitCode != 0) throw new IOException($"PresentMon terminó con código {process.ExitCode}: {error}");
             if (!File.Exists(file) || new FileInfo(file).Length > 24_000_000) throw new IOException("No hay CSV válido o supera 24 MB.");
-            return Import(new(await File.ReadAllTextAsync(file, cancellationToken), request.ProcessName,
+            var measured = Import(new(await File.ReadAllTextAsync(file, cancellationToken), request.ProcessName,
                 request.Scenario, request.Configuration, request.Width, request.Height, request.FpsCap,
                 request.TargetFps, 5));
+            measured = measured with { Provenance = "NativeCapture", CaptureStartedUtc = startedUtc,
+                OperationRevision = startRevision == journal.Revision ? startRevision : null, SystemSamples = systemSamples };
+            runs[measured.Id] = measured;
+            return measured;
+            }
+            finally { sampleCancellation.Cancel(); await sampleTask; }
         }
         finally
         {
@@ -75,4 +90,20 @@ public sealed class BenchmarkSessionService
             try { File.Delete(file); } finally { captureGate.Release(); }
         }
     }
+    private async Task<EvoNativeEngine.Models.RealtimeTelemetryData[]> SampleAsync(CancellationToken token)
+    {
+        var samples = new List<EvoNativeEngine.Models.RealtimeTelemetryData>();
+        try
+        {
+            while (!token.IsCancellationRequested && samples.Count < 160)
+            {
+                try { samples.Add(await operations.GetRealtimeTelemetryAsync()); }
+                catch { /* No fabricated samples when a sensor provider fails. */ }
+                await Task.Delay(1000, token);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        return samples.ToArray();
+    }
+
 }

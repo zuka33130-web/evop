@@ -40,7 +40,9 @@ builder.Services.AddSingleton<IBackupManager, BackupManager>();
 builder.Services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
 builder.Services.AddSingleton<IOptimizationService, OptimizationService>();
 builder.Services.AddSingleton<IEvoCleanService, EvoCleanService>();
+builder.Services.AddSingleton<OperationJournal>();
 builder.Services.AddSingleton<BenchmarkSessionService>();
+builder.Services.AddSingleton<OptimizationExperimentService>();
 
 // CORS: Permitir exclusivamente solicitudes de clientes locales (Vite dev server, Tauri, etc.)
 builder.Services.AddCors(options =>
@@ -61,6 +63,13 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors("LocalIpcPolicy");
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/api/clean"))
+        context.RequestServices.GetRequiredService<OperationJournal>().Touch();
+    await next();
+});
+
 
 var startedAt = DateTime.UtcNow;
 var process = Process.GetCurrentProcess();
@@ -229,6 +238,41 @@ app.MapPost("/api/benchmarks/compare", (Guid[] ids, BenchmarkSessionService sess
 app.MapPost("/api/benchmarks/capture", async (CaptureRequest request, BenchmarkSessionService sessions, HttpContext context) =>
 {
     try { return Results.Ok(await sessions.CaptureAsync(request, context.RequestAborted)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+app.MapGet("/api/benchmarks/experiments/active", (OptimizationExperimentService experiments) => Results.Ok(experiments.Active));
+app.MapPost("/api/benchmarks/experiments/start", async (ExperimentStart request, OptimizationExperimentService experiments) =>
+{
+    try { return Results.Ok(await experiments.StartAsync(request)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/benchmarks/experiments/evaluate", (ExperimentEvaluation request, OptimizationExperimentService experiments) =>
+{
+    try { return Results.Ok(experiments.Evaluate(request)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/benchmarks/experiments/restore", async (ExperimentEvaluation request, OptimizationExperimentService experiments) =>
+{
+    try { return Results.Ok(await experiments.RestoreAsync(request.Id)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+// Fixed Settings URIs only: open supported system UI instead of undocumented registry guesses.
+app.MapPost("/api/system/settings/{id}", (string id) =>
+{
+    var pages = new Dictionary<string, string> {
+        ["graphics"] = "ms-settings:display-advancedgraphics", ["display"] = "ms-settings:display-advanced",
+        ["startup"] = "ms-settings:startupapps", ["captures"] = "ms-settings:gaming-gamedvr",
+        ["gamemode"] = "ms-settings:gaming-gamemode", ["storage"] = "ms-settings:storagesense"
+    };
+    if (!OperatingSystem.IsWindows() || !pages.TryGetValue(id, out var uri))
+        return Results.BadRequest(new { error = "Página no admitida o sistema distinto de Windows." });
+    try
+    {
+        Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        return Results.Ok(new { opened = id, changed = false });
+    }
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 
