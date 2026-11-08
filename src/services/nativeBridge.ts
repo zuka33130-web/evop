@@ -6,7 +6,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-export const DEFAULT_NATIVE_ENGINE_URL = 'http://127.0.0.1:48120';
+// Same-origin works in WebView2 (including alternate ports), Vite proxy and remote previews.
+export const DEFAULT_NATIVE_ENGINE_URL = '';
 
 export interface EngineStatus {
   isReady: boolean;
@@ -178,9 +179,9 @@ export async function checkEngineStatus(baseUrl = DEFAULT_NATIVE_ENGINE_URL): Pr
     return data;
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      throw new Error(`Tiempo de espera agotado al conectar con ${baseUrl} (3.5s). Verifica que EvoNativeEngine esté corriendo.`);
+      throw new Error(`Tiempo de espera agotado al conectar con ${baseUrl || 'la API local'} (3.5s). Verifica que EvoNativeEngine esté corriendo.`);
     }
-    throw new Error(`No se pudo conectar con el motor nativo en ${baseUrl}. Asegúrate de ejecutar scripts/Start-EvoEngine.ps1 o dotnet run en src-native/EvoNativeEngine.`);
+    throw new Error(`No se pudo conectar con el motor nativo en ${baseUrl || 'la API de este equipo'}. Asegúrate de ejecutar scripts/Start-EvoEngine.ps1 o dotnet run en src-native/EvoNativeEngine.`);
   } finally {
     clearTimeout(timeoutId);
   }

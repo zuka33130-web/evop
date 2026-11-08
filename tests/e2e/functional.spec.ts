@@ -11,7 +11,7 @@ const diagnostic = {
   graphicsCards: [], storageDrives: [], executionTimeMs: 2, queriedAtUtc: new Date().toISOString(), hostName: 'test', isWindowsPlatform: true, isElevated: false
 };
 test.beforeEach(async ({ page }) => {
-  await page.route('http://127.0.0.1:48120/api/**', async route => {
+  await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     let data: unknown = {};
     if (path === '/api/status') data = { isReady: true, isElevated: false, version: 'test', engineName: 'Test engine', supportedEndpoints: [], operatingSystem: 'Windows', architecture: 'x64', uptimeSeconds: 1 };
@@ -65,7 +65,7 @@ test('cleanup scans only after request and selects nothing automatically', async
 
 test('manual before/after measurement keeps results across navigation and shows measured delta', async ({ page }) => {
   let captures = 0;
-  await page.route('http://127.0.0.1:48120/api/benchmarks/capture', async route => {
+  await page.route('**/api/benchmarks/capture', async route => {
     if (route.request().method() === 'OPTIONS') {
       await route.fulfill({ status: 200, headers: { 'Access-Control-Allow-Origin':'*', 'Access-Control-Allow-Headers':'Content-Type', 'Access-Control-Allow-Methods':'POST,OPTIONS' } }); return;
     }

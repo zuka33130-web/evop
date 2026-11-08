@@ -15,6 +15,7 @@
 | Descripciones breves insuficientes | Cada acción ofrece alcance, cuándo considerarla, riesgos, verificación y reversión. Guías específicas para los módulos atómicos y sus alias; presets explican límites de aplicación parcial. |
 | Cambios durante una captura podían confundir resultados | Acciones de la app bloqueadas durante solicitudes del laboratorio; aviso de medición al navegar. No se puede bloquear software externo: la comparación sigue siendo descriptiva. |
 | Metadatos HTML conservaban marca/equipo/promesas antiguas | Título y descripción actualizados a EVO y mediciones reales. |
+| URL absoluta al motor fallaba en puertos alternativos y previews | Peticiones relativas /api: mismo origen en escritorio y proxy Vite en desarrollo. No se relajan las comprobaciones de Host/token del motor. |
 | Portapapeles anunciaba éxito sin confirmar | Se espera la promesa y se informa fallo. |
 | UI sin prueba de tamaño móvil | Chromium verifica navegación móvil y ausencia de desbordamiento del panel a 390 px. Capturas de escritorio y móvil para revisión. |
 
