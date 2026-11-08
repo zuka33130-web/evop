@@ -43,8 +43,8 @@ export default function App() {
         {activeTab === 'native-operations' && <NativeOperationsPanel connected={native.isConnected} elevated={!!native.engineInfo?.isElevated} globalBusy={!!native.activeOperation || captureBusy} catalog={native.catalog} onMeasure={() => setActiveTab('stability')} apply={guardedApply} restore={native.restoreOp} />}
         {activeTab === 'diagnostics' && <section className="space-y-5"><h1 className="text-2xl font-bold">Diagnóstico del equipo</h1><NativeDiagnosticsCard status={native.connectionStatus} engineInfo={native.engineInfo} diagnostics={native.diagnostics} error={native.error} isScanning={native.isScanning} onReconnect={native.reconnect} onRefresh={native.refreshScan} catalog={native.catalog} history={native.history} /></section>}
         <div hidden={activeTab !== 'stability'}><FrameStabilityLab connected={native.isConnected} onBusyChange={setCaptureBusy} /></div>
-        {activeTab === 'cleaner' && <SmartCleanup connected={native.isConnected} />}
-        {activeTab === 'advisor' && <LocalAuditAdvisor connected={native.isConnected} apply={guardedApply} onMeasure={() => setActiveTab('stability')} />}
+        <div hidden={activeTab !== 'cleaner'}><SmartCleanup connected={native.isConnected} /></div>
+        <div hidden={activeTab !== 'advisor'}><LocalAuditAdvisor connected={native.isConnected} apply={guardedApply} onMeasure={() => setActiveTab('stability')} /></div>
         {activeTab === 'knowledge' && <ResearchSources />}
         {activeTab === 'history' && <section className="space-y-4"><h1 className="text-2xl font-bold">Historial del motor</h1><p className="text-sm text-neutral-400">Resultados de aplicación y restauración. No confundir cambio aplicado con mejora de rendimiento. Este historial es de la sesión del motor.</p><button disabled={!native.isConnected} className="underline" onClick={native.refreshHistory}>Actualizar historial</button>
           {!native.history.length && <p>No hay operaciones registradas.</p>}

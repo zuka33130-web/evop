@@ -32,7 +32,7 @@ test.beforeEach(async ({ page }) => {
 test('all navigation destinations render without legacy simulations', async ({ page }) => {
   const destinations = [
     ['Auditor local', 'Auditor local de hardware y software'], ['Operaciones Windows', 'Operaciones nativas verificables'],
-    ['Estabilidad y 1% Low', 'Motor de estabilidad'], ['Limpieza inteligente', 'Limpieza inteligente y recuperable'],
+    ['Estabilidad y 1% Low', 'Laboratorio de FPS'], ['Limpieza inteligente', 'Limpieza inteligente y recuperable'],
     ['Diagnóstico', 'Diagnóstico'], ['Historial', 'Historial del motor'], ['Fuentes y herramientas', 'Fuentes técnicas y decisiones de ingeniería'],
     ['Panel de control', 'Panel de control']
   ];
@@ -78,11 +78,11 @@ test('manual before/after measurement keeps results across navigation and shows 
   await page.getByRole('navigation').getByRole('button', { name:/Estabilidad y 1% Low/ }).click();
   await page.getByLabel('Duración de la captura').selectOption('90');
   await page.getByRole('button',{name:'Capturar fase A · 90 s'}).click();
-  await expect(page.getByText('100.00', {exact:true}).first()).toBeVisible();
+  await expect(page.locator('.result-grid .metric-value').first()).toContainText('100.00');
   await page.getByRole('navigation').getByRole('button',{name:/Operaciones Windows/}).click();
   await expect(page.getByText('Conoce el alcance antes de aplicar.',{exact:false})).toBeVisible();
   await page.getByRole('navigation').getByRole('button',{name:/Estabilidad y 1% Low/}).click();
-  await expect(page.getByText('100.00', {exact:true}).first()).toBeVisible();
+  await expect(page.locator('.result-grid .metric-value').first()).toContainText('100.00');
   await page.getByRole('button',{name:'B · Después',exact:true}).click();
   await page.getByRole('button',{name:'Capturar fase B · 90 s'}).click();
   await expect(page.getByText('+10.00%',{exact:true})).toBeVisible();
@@ -102,14 +102,14 @@ test('operation definitions and category filter explain each change', async ({ p
 });
 
 test('desktop and mobile layout fit viewport with accessible navigation', async ({ page }, testInfo) => {
-  await page.screenshot({ path:testInfo.outputPath('dashboard-desktop.png'), fullPage:true });
+  await page.screenshot({ path:testInfo.outputPath('dashboard-desktop.png'), fullPage:true, animations:'disabled' });
   await page.getByRole('navigation').getByRole('button',{name:/Estabilidad y 1% Low/}).click();
-  await page.screenshot({ path:testInfo.outputPath('laboratory-desktop.png'), fullPage:true });
+  await page.screenshot({ path:testInfo.outputPath('laboratory-desktop.png'), fullPage:true, animations:'disabled' });
   await page.setViewportSize({width:390,height:844});
   await expect(page.getByRole('button',{name:'Abrir navegación',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Abrir navegación',exact:true}).click();
   await page.getByRole('navigation').getByRole('button',{name:/Panel de control/}).click();
   await expect(page.getByRole('heading',{name:'Panel de control',exact:true})).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.screenshot({ path:testInfo.outputPath('dashboard-mobile.png'), fullPage:true });
+  await page.screenshot({ path:testInfo.outputPath('dashboard-mobile.png'), fullPage:true, animations:'disabled' });
 });

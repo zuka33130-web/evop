@@ -15,3 +15,6 @@ dist-native/
 # Browser test output
 playwright-report/
 test-results/
+
+# Local audit scratch and sandbox browser libraries
+.cache/

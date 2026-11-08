@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { ArrowUpRight, SlidersHorizontal, ShieldCheck } from 'lucide-react';
+import { ArrowUpRight, SlidersHorizontal } from 'lucide-react';
 import { operationGuide } from '../services/operationGuide';
 import { DEFAULT_NATIVE_ENGINE_URL, fetchOperationStatus, type OperationCatalogItem, type OperationResult, type OperationStatusResponse } from '../services/nativeBridge';
 

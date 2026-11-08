@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Crosshair, ArrowRight, Timer, Activity, Download, CheckCircle2, CircleHelp } from 'lucide-react';
+import { Crosshair, ArrowRight, Timer, Activity, Download, CircleHelp } from 'lucide-react';
 import { FrameTimeline, type TimelinePoint } from './FrameTimeline';
 import { DEFAULT_NATIVE_ENGINE_URL } from '../services/nativeBridge';
 
 type Run = {
-  id: string; processName: string; scenario: string; sourceColumn: string; createdUtc: string; targetFps: number; timeline?: TimelinePoint[]; requestedSeconds?: number; capturedProcessId?: number; configuration: string; width: number; height: number; fpsCap: number;
-  metrics: { frames: number; seconds: number; averageFps: number; onePercentLowFps: number;
+  id: string; processName: string; scenario: string; sourceColumn: string; createdUtc: string; targetFps: number; sourceSha256?: string; timeline?: TimelinePoint[]; requestedSeconds?: number; capturedProcessId?: number; configuration: string; width: number; height: number; fpsCap: number;
+  metrics: { frames: number; rejectedRows?: number; seconds: number; averageFps: number; onePercentLowFps: number;
     p99Ms: number; budgetMissPercent: number; stutterPercent: number };
   warnings: string[]; provenance: string; systemSamples?: { cpuUsagePct: number | null; ramUsedPct: number | null }[];
 };
@@ -35,6 +35,7 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
   const [elapsed, setElapsed] = useState(0);
   const startedAt = useRef(0);
   const requestLock = useRef(false);
+  const readinessVersion = useRef(0);
   useEffect(() => {
     if (!capturing) return;
     const timer = setInterval(() => setElapsed((Date.now() - startedAt.current) / 1000), 250);
@@ -67,10 +68,13 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
       .then((data: Run[]) => { if (Array.isArray(data)) setRuns(data); }).catch(() => setError('No se pudo recuperar el historial de capturas de esta sesión.'));
   }, [connected]);
   async function checkReadiness() {
+    const version = ++readinessVersion.current;
+    setReadiness(null);
     try {
       const r = await fetch(`${DEFAULT_NATIVE_ENGINE_URL}/api/benchmarks/readiness?processName=${encodeURIComponent(processName)}`);
       if (!r.ok) throw new Error('No se pudo verificar la preparación del motor.');
-      setReadiness(await r.json());
+      const data = await r.json();
+      if (version === readinessVersion.current) setReadiness(data);
     } catch (e) { setError(e instanceof Error ? e.message : 'Sin conexión'); }
   }
   useEffect(() => { if (connected) void checkReadiness(); else setReadiness(null); }, [connected, processName]);
@@ -105,6 +109,8 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
     if (action !== 'evaluate' && !confirm(action === 'start'
       ? 'Se aplicará un cambio real en Windows. Conserva la misma escena y configuración para medir B. ¿Continuar?'
       : '¿Restaurar el respaldo del módulo probado?')) return;
+    if (requestLock.current) return;
+    requestLock.current = true;
     setBusy(true); setError('');
     try {
       if (action === 'start') {
@@ -119,12 +125,13 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
         setExperiment(null); setVerdict(null); setComparison(null);
       }
     } catch (e) { setError(e instanceof Error ? e.message : 'Falló el experimento'); }
-    finally { setBusy(false); }
+    finally { requestLock.current = false; setBusy(false); }
   }
   const baseline = runs.find(r => r.id === baselineId);
   const after = runs.find(r => r.id === afterId);
   const selected = (phase === 'A' ? baseline : after) || runs.at(-1);
   const mismatch = baseline && after ? baseline.id === after.id ? 'Selecciona dos capturas distintas.'
+    : baseline.sourceSha256 && baseline.sourceSha256 === after.sourceSha256 ? 'El mismo CSV no cuenta como dos mediciones independientes.'
     : ['processName','scenario','width','height','fpsCap','targetFps','sourceColumn'].some(key => baseline[key as keyof Run] !== after[key as keyof Run])
       ? 'Contexto distinto: usa el mismo proceso, escena, resolución, cap, objetivo y fuente de intervalos.' : '' : '';
   function exportReport() {
@@ -133,7 +140,7 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
     const a = document.createElement('a'); a.href = url; a.download = 'evo-benchmark-report.json'; a.click(); URL.revokeObjectURL(url);
   }
   return <section className="space-y-5">
-    <div className="page-heading"><div><span className="eyebrow">BENCHMARK WORKSPACE</span><h1>Motor de estabilidad · laboratorio de FPS</h1><p>Una referencia. Un cambio. Una nueva medición. Compara resultados reales sin salir de la aplicación.</p></div><span className="pill lime"><Activity size={12} /> PRESENTMON / ETW</span></div>
+    <div className="page-heading"><div><span className="eyebrow">BENCHMARK WORKSPACE</span><h1>Laboratorio de FPS</h1><p>Una referencia. Un cambio. Una nueva medición. Compara resultados reales sin salir de la aplicación.</p></div><span className="pill lime"><Activity size={12} /> PRESENTMON / ETW</span></div>
     <div className="lab-grid">
       <div className="instrument-card">
         <h2 className="text-sm font-semibold flex items-center gap-2"><Crosshair size={16} className="text-lime-200" /> Preparar medición</h2><p className="text-[10px] text-neutral-400 leading-6 mt-2">Abre el juego y repite una escena fija. No cambies de ventana durante la captura.</p>
@@ -154,6 +161,7 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
       </div>
       <div className="space-y-5">
         {capturing && <div className="instrument-card" role="status"><div className="flex justify-between text-xs mb-4"><span>{elapsed < seconds ? 'Capturando · juega la escena habitual' : 'Finalizando y analizando intervalos…'}</span><span>{Math.min(Math.floor(elapsed),seconds)} / {seconds} s</span></div><div className="capture-progress"><div style={{width:`${Math.min(100,elapsed/seconds*100)}%`}} /></div><p className="text-[10px] text-neutral-400 mt-3">El progreso es tiempo transcurrido de solicitud, no FPS en vivo. No se presentan cifras hasta validar el CSV.</p></div>}
+        {selected && <p className="text-[10px] text-neutral-400">Mostrando captura: {selected.configuration} · {selected.metrics.seconds.toFixed(1)} s útiles · {selected.id === baselineId ? 'A / referencia' : selected.id === afterId ? 'B / resultado' : 'última captura'}</p>}
         <div className="result-grid">{[
           ['FPS promedio', selected?.metrics.averageFps, 'FPS', 'Más alto suele ser mejor'],
           ['1% low', selected?.metrics.onePercentLowFps, 'FPS', 'Estabilidad en los peores frames'],
@@ -205,7 +213,8 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
       <div className="flex justify-between gap-2"><h2 className="font-bold">#{i + 1} {r.configuration} · {r.width}×{r.height} · cap {r.fpsCap || 'libre'}</h2>
         <button disabled={busy || !!experiment} onClick={() => { setRuns(v => v.filter(x => x.id !== r.id)); if (baselineId === r.id) setBaseline(''); if (afterId === r.id) setAfter(''); setComparison(null); }} className="text-neutral-400">Quitar</button></div>
       <p className="text-sm font-mono">FPS {r.metrics.averageFps.toFixed(2)} · 1% low {r.metrics.onePercentLowFps.toFixed(2)} · P99 {r.metrics.p99Ms.toFixed(2)} ms · fuera de presupuesto {r.metrics.budgetMissPercent.toFixed(2)}% · {r.metrics.frames} frames / {r.metrics.seconds.toFixed(1)} s</p>
-      <p className="text-xs text-cyan-300">{experiment ? experiment.beforeIds.includes(r.id) ? 'Fase A' : 'Fase B' : 'Sin fase'} · {r.provenance === 'NativeCapture' ? 'Captura nativa' : 'CSV importado'} · {r.systemSamples?.length || 0} muestras de CPU/RAM/reloj/ACPI (sensores disponibles)</p>
+      <p className="text-xs text-cyan-300">{experiment ? experiment.beforeIds.includes(r.id) ? 'Fase A del experimento' : 'Fase B del experimento' : r.id === baselineId ? 'Referencia A seleccionada' : r.id === afterId ? 'Resultado B seleccionado' : 'Sin fase asignada'} · {r.provenance === 'NativeCapture' ? 'Captura nativa' : 'CSV importado'} · {r.systemSamples?.length || 0} muestras de CPU/RAM/reloj/ACPI (sensores disponibles)</p>
+      {!!r.metrics.rejectedRows && <p className="text-xs text-amber-300">{r.metrics.rejectedRows} filas inválidas excluidas. Revisa la calidad de la captura.</p>}
       {r.warnings.map(w => <p key={w} className="text-xs text-amber-300">{w}</p>)}
     </article>)}
     </div>
