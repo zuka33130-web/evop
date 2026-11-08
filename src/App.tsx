@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import { defaultHardwareProfile, HardwareProfile } from './data/optimizerData';
 import { downloadPackageZip } from './utils/zipGenerator';
-import { Navbar } from './components/Navbar';
 import { HardwareProfileHeader } from './components/HardwareProfileHeader';
 import { QuickRunTerminal } from './components/QuickRunTerminal';
 import { ModulesExplorer } from './components/ModulesExplorer';

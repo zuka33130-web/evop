@@ -28,6 +28,8 @@ public class OptimizationService : IOptimizationService
     private readonly IBackupManager _backupManager;
     private readonly IDiagnosticsService _diagnosticsService;
 
+    private RegistryOptimizationService RegistryOperations => new(_backupManager, _securityService);
+
     private readonly ConcurrentBag<OperationHistoryItem> _history = new();
     private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 
@@ -134,7 +136,12 @@ public class OptimizationService : IOptimizationService
 
         try
         {
-            OperationResult result = operationId switch
+            if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("El motor de optimización requiere Windows.");
+            if (_catalog.TryGetValue(operationId, out var entry) && entry.RequiresElevation && !_securityService.IsElevated())
+                throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
+            OperationResult result = RegistryOperations.Supports(operationId)
+                ? await RegistryOperations.ExecuteAsync(operationId, false)
+                : operationId switch
             {
                 // Diagnóstico y Telemetría
                 "system.hardware.refresh" => await ExecuteHardwareRefreshAsync(logs, sw),
@@ -231,7 +238,12 @@ public class OptimizationService : IOptimizationService
 
         try
         {
-            OperationResult result = operationId switch
+            if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("El motor de optimización requiere Windows.");
+            if (_catalog.TryGetValue(operationId, out var entry) && entry.RequiresElevation && !_securityService.IsElevated())
+                throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
+            OperationResult result = RegistryOperations.Supports(operationId)
+                ? await RegistryOperations.ExecuteAsync(operationId, true)
+                : operationId switch
             {
                 "gaming.cs2.priority" or "gaming.cs2.priority.restore" or "cortex.mode.bestia" or "tweak.cpu.affinity_15" => 
                     await ExecuteCs2PriorityRestoreWithValidationAsync(logs, sw),
@@ -987,28 +999,8 @@ public class OptimizationService : IOptimizationService
     // 17. Restauración Global a Stock
     private async Task<OperationResult> ExecuteGlobalRestoreAsync(List<string> logs, Stopwatch sw)
     {
-        logs.Add("[RESTAURACIÓN GLOBAL] Revertiendo todos los ajustes al estado original de Windows...");
-
-        await ExecuteCs2PriorityRestoreWithValidationAsync(logs, Stopwatch.StartNew());
-        await ExecuteTorneoRestoreAsync(logs, Stopwatch.StartNew());
-        await ExecuteServicesRestoreAsync(logs, Stopwatch.StartNew());
-
-        // Restablecer BCDedit timers
-        RunProcessSync("bcdedit", "/set disabledynamictick no", logs);
-        RunProcessSync("bcdedit", "/set tscsyncpolicy Default", logs);
-
-        // Restablecer DWM OverlayTestMode
-        try
-        {
-            using var dwm = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows\Dwm");
-            dwm?.DeleteValue("OverlayTestMode", false);
-            logs.Add("[REGISTRO] OverlayTestMode revertido a valor stock.");
-        }
-        catch { }
-
-        sw.Stop();
-        logs.Add($"[COMPLETADO] Sistema restaurado a valores stock en {sw.Elapsed.TotalMilliseconds:F1} ms.");
-        return new OperationResult(true, "cortex.mode.restore", "restore", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, new { StockRestored = true }, null, true);
+        await Task.CompletedTask;
+        throw new NotSupportedException("La restauración global no garantiza recuperar todos los valores originales. Restaura cada operación compatible individualmente; los respaldos se conservan.");
     }
 
     // 18. Auto Pre Game
@@ -1141,13 +1133,8 @@ public class OptimizationService : IOptimizationService
 
     private async Task<OperationResult> ExecuteGenericRestoreFromBackupAsync(string operationId, List<string> logs, Stopwatch sw)
     {
-        logs.Add($"[GENÉRICO] Consultando snapshot de restauración para '{operationId}'...");
-        var backup = await _backupManager.GetLastStateAsync<JsonElement>(operationId);
-        await _backupManager.ClearBackupAsync(operationId);
-
-        sw.Stop();
-        logs.Add("[OK] Respaldo procesado.");
-        return new OperationResult(true, operationId, "restore", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { Restored = true }, null, true);
+        await Task.CompletedTask;
+        throw new NotSupportedException($"La operación '{operationId}' no dispone de restauración implementada. Respaldo conservado.");
     }
 
     #endregion
@@ -1202,30 +1189,26 @@ public class OptimizationService : IOptimizationService
 
     private static void RunProcessSync(string file, string args, List<string> logs)
     {
-        try
+        using var proc = new Process();
+        proc.StartInfo = new ProcessStartInfo
         {
-            using var proc = new Process();
-            proc.StartInfo = new ProcessStartInfo
-            {
-                FileName = file,
-                Arguments = args,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            proc.Start();
-            proc.WaitForExit(3000);
-            string output = proc.StandardOutput.ReadToEnd().Trim();
-            if (!string.IsNullOrEmpty(output))
-            {
-                logs.Add($"[{file}] {output}");
-            }
-        }
-        catch (Exception ex)
+            FileName = file, Arguments = args, UseShellExecute = false,
+            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
+        };
+        proc.Start();
+        var stdout = proc.StandardOutput.ReadToEndAsync();
+        var stderr = proc.StandardError.ReadToEndAsync();
+        if (!proc.WaitForExit(30000))
         {
-            logs.Add($"[{file} AVISO] {ex.Message}");
+            proc.Kill(entireProcessTree: true);
+            proc.WaitForExit();
+            throw new TimeoutException($"{file}: tiempo de espera agotado.");
         }
+        var output = stdout.GetAwaiter().GetResult();
+        var error = stderr.GetAwaiter().GetResult();
+        if (!string.IsNullOrWhiteSpace(output)) logs.Add(output.Trim());
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"{file} terminó con código {proc.ExitCode}: {error} {output}");
     }
 
     private void RecordHistory(string operationId, string actionType, bool success, double durationMs, string summary, string? error)

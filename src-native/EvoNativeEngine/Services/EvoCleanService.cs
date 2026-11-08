@@ -81,20 +81,8 @@ namespace EvoNativeEngine.Services
 
             if (string.IsNullOrEmpty(scriptPath))
             {
-                _logger.LogWarning("Script Invoke-EvoClean.ps1 no hallado físicamente en disco. Generando respuesta de simulación controlada.");
-                
-                sw.Stop();
-                var fallbackResult = new EvoCleanResult
-                {
-                    Status = "success",
-                    Mode = validMode,
-                    FreedMB = validMode == "Clean" ? 8590.5 : 0,
-                    ScannedMB = 8590.5,
-                    Details = "Temporales de Usuario: 2430.8 MB | Temporales de Sistema: 850.2 MB | Windows Update: 3120 MB | Prefetch: 142.3 MB | DirectX Shaders: 1248.5 MB | WER Crash Dumps: 798.7 MB",
-                    DurationMs = sw.ElapsedMilliseconds
-                };
-
-                return fallbackResult;
+                return new EvoCleanResult { Status = "error", Mode = validMode,
+                    Details = "No se encontró Invoke-EvoClean.ps1. No se ejecutó ninguna limpieza." };
             }
 
             try
@@ -123,6 +111,8 @@ namespace EvoNativeEngine.Services
 
                 _logger.LogInformation("Invoke-EvoClean.ps1 completado con código {ExitCode} en {Duration}ms", process.ExitCode, sw.ElapsedMilliseconds);
 
+                if (process.ExitCode != 0) throw new InvalidOperationException($"PowerShell: {stderr}");
+
                 if (!string.IsNullOrWhiteSpace(stdout))
                 {
                     try
@@ -146,10 +136,10 @@ namespace EvoNativeEngine.Services
 
                 return new EvoCleanResult
                 {
-                    Status = process.ExitCode == 0 ? "success" : "warning",
+                    Status = "error",
                     Mode = validMode,
-                    FreedMB = validMode == "Clean" ? 120.45 : 0,
-                    ScannedMB = 120.45,
+                    FreedMB = 0,
+                    ScannedMB = 0,
                     Details = string.IsNullOrWhiteSpace(stdout) ? (stderr ?? "Ejecutado sin errores.") : stdout,
                     DurationMs = sw.ElapsedMilliseconds
                 };
