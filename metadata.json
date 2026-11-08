@@ -1,0 +1,6 @@
+{
+  "name": "RYZER CORTEX ULTRA - ASUS PN64 CS2 Booster & EVO Lab",
+  "description": "Optimizador de FPS para ASUS PN64 (i3-1220P 2P+8E e Intel UHD 64EU) con 110 tweaks, 15 modos Cortex, autoexec competitivo y Laboratorio Científico EVO A/B con Mann-Whitney U, Bootstrap 10k y PresentMon.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
