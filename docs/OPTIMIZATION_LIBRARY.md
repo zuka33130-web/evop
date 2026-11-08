@@ -49,7 +49,7 @@ Lista cerrada: News, Weather, Solitaire Collection, Get Help, Get Started, Peopl
 
 Revalida identidad, rechaza frameworks/no eliminables y verifica que el paquete deje de estar registrado. Store, App Installer, Gaming Services, WebView2, anticheat y frameworks no están permitidos. Instancias ambiguas con varias versiones del mismo nombre se excluyen.
 
-Guarda inventario/recibo antes de desinstalar. Recuperación intenta Add-AppxPackage -Register **solo si** queda el manifiesto del paquete original en WindowsApps, sin enlaces y con identidad/ruta concordantes. Si falta, informa reinstalación manual desde Store. No garantiza recuperar datos personales ni instalación offline.
+Guarda inventario/recibo antes de desinstalar. Recuperación intenta Add-AppxPackage -Register **solo si** queda el manifiesto del paquete original en WindowsApps, sin enlaces y con identidad/ruta concordantes. Si falta, informa reinstalación manual desde Store. No garantiza recuperar datos personales ni instalación offline. La interfaz permite buscar recibos persistidos de plantillas, sesiones Bestia y debloat, sin depender únicamente de copiar el ID antes de reiniciar.
 
 ## Medición y recomendaciones
 

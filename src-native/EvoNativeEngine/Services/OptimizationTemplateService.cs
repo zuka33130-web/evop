@@ -101,19 +101,5 @@ public sealed class OptimizationTemplateService(IOptimizationService operations,
         }
         finally { gate.Release(); }
     }
-    public async Task<TemplateReceipt[]> ReceiptsAsync()
-    {
-        if (!Directory.Exists(backups.BackupDirectory)) return [];
-        var list = new List<TemplateReceipt>();
-        foreach (var file in Directory.EnumerateFiles(backups.BackupDirectory, "state_template_*_latest.json").OrderDescending().Take(100))
-        {
-            var name = Path.GetFileName(file).Replace("state_template_", "").Replace("_latest.json", "");
-            if (Guid.TryParseExact(name, "N", out var id))
-            {
-                var item = await backups.GetLastStateAsync<TemplateReceipt>("template." + id.ToString("N"));
-                if (item?.Id == id) list.Add(item);
-            }
-        }
-        return list.OrderByDescending(r => r.CreatedUtc).ToArray();
-    }
+    public Task<TemplateReceipt[]> ReceiptsAsync() => WorkflowReceipts.ReadAsync<TemplateReceipt>(backups, "template", r => r.Id);
 }

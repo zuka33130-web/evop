@@ -83,6 +83,7 @@ public sealed class DebloatService(IOptionalPackages packages, IBackupManager ba
         new("Microsoft.MicrosoftOfficeHub", "Microsoft 365 / Office Hub", "No desinstala Word/Excel Win32; elimina solo el hub."),
         new("Clipchamp.Clipchamp", "Clipchamp", "Guarda/exporta proyectos antes: puede perder datos locales.")
     ];
+    public Task<DebloatReceipt[]> ReceiptsAsync() => WorkflowReceipts.ReadAsync<DebloatReceipt>(backups, "debloat", r => r.Id);
     public async Task<object> PreviewAsync()
     {
         await gate.WaitAsync();

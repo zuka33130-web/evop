@@ -373,6 +373,8 @@ app.MapPost("/api/templates/receipts/{id:guid}/restore", async (Guid id, Optimiz
 {
     try { return Results.Ok(await service.RestoreAsync(id)); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
+app.MapGet("/api/beast/receipts", async (BeastSessionService service) => Results.Ok(await service.ReceiptsAsync()));
+app.MapGet("/api/debloat/receipts", async (DebloatService service) => Results.Ok(await service.ReceiptsAsync()));
 app.MapPost("/api/beast/preview", (BeastSessionService service) =>
 {
     try { return Results.Ok(service.Preview()); } catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }

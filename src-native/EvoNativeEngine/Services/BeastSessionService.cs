@@ -72,6 +72,7 @@ public sealed class BeastSessionService(IOptionalApplications applications, IOpt
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly ConcurrentDictionary<Guid, BeastPlan> plans = new();
+    public Task<BeastReceipt[]> ReceiptsAsync() => WorkflowReceipts.ReadAsync<BeastReceipt>(backups, "beast", r => r.Id);
     public BeastPlan Preview()
     {
         foreach (var entry in plans.Where(p => p.Value.ExpiresUtc < DateTime.UtcNow)) plans.TryRemove(entry.Key, out _);
