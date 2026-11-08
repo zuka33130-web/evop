@@ -19,7 +19,9 @@ import {
 import { 
   SystemHardwareReport, 
   EngineStatus, 
-  ConnectionStatus 
+  ConnectionStatus,
+  OperationCatalogItem,
+  OperationHistoryItem 
 } from '../services/nativeBridge';
 
 interface NativeDiagnosticsCardProps {
@@ -31,6 +33,8 @@ interface NativeDiagnosticsCardProps {
   onReconnect: () => void;
   onRefresh: () => void;
   onApplyRealHardware?: (diag: SystemHardwareReport) => void;
+  catalog?: OperationCatalogItem[];
+  history?: OperationHistoryItem[];
 }
 
 export const NativeDiagnosticsCard: React.FC<NativeDiagnosticsCardProps> = ({
@@ -41,7 +45,9 @@ export const NativeDiagnosticsCard: React.FC<NativeDiagnosticsCardProps> = ({
   isScanning,
   onReconnect,
   onRefresh,
-  onApplyRealHardware
+  onApplyRealHardware,
+  catalog = [],
+  history = []
 }) => {
   const [copiedCmd, setCopiedCmd] = React.useState<string | null>(null);
 
@@ -336,6 +342,89 @@ export const NativeDiagnosticsCard: React.FC<NativeDiagnosticsCardProps> = ({
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+          {/* 6. Operations Catalog & History */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Catalog */}
+            <div className="p-5 rounded-xl bg-neutral-900/80 border border-neutral-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
+                  <Activity className="w-4 h-4" />
+                  <span>Catálogo de Operaciones Reales en C# ({catalog.length})</span>
+                </div>
+                <span className="text-[11px] font-mono text-neutral-500">GET /api/operations</span>
+              </div>
+
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                {catalog.length === 0 ? (
+                  <div className="text-xs text-neutral-500 italic py-3">Cargando catálogo de operaciones...</div>
+                ) : (
+                  catalog.map((item) => (
+                    <div key={item.id} className="p-2.5 rounded-lg bg-neutral-950/70 border border-neutral-800/80 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-emerald-300 font-semibold">{item.id}</span>
+                        <div className="flex items-center gap-1.5">
+                          {item.canRestore && (
+                            <span className="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800 px-1.5 py-0.2 rounded font-mono">
+                              Reversible
+                            </span>
+                          )}
+                          <span className="text-[10px] bg-neutral-800 text-neutral-400 px-1.5 py-0.2 rounded">
+                            {item.category}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-neutral-400 mt-1">{item.description}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* History */}
+            <div className="p-5 rounded-xl bg-neutral-900/80 border border-neutral-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-semibold text-cyan-400">
+                  <Clock className="w-4 h-4" />
+                  <span>Historial de Operaciones del Motor ({history.length})</span>
+                </div>
+                <span className="text-[11px] font-mono text-neutral-500">GET /api/operations/history</span>
+              </div>
+
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                {history.length === 0 ? (
+                  <div className="text-xs text-neutral-500 italic py-8 text-center">
+                    Aún no se han ejecutado operaciones en esta sesión del motor.
+                  </div>
+                ) : (
+                  history.map((h) => (
+                    <div key={h.id} className="p-2.5 rounded-lg bg-neutral-950/70 border border-neutral-800/80 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-white font-semibold">{h.operationId}</span>
+                        <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                          h.success 
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' 
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        }`}>
+                          {h.success ? `${h.durationMs}ms [OK]` : `Error`}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-neutral-400 mt-1 flex items-center justify-between">
+                        <span>{h.summary}</span>
+                        <span className="font-mono text-[10px] text-neutral-500">
+                          {new Date(h.timestampUtc).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      {h.errorMessage && (
+                        <div className="text-[11px] text-rose-400 font-mono mt-1">
+                          {h.errorMessage}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>

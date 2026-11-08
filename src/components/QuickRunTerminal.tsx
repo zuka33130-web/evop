@@ -9,10 +9,12 @@ import {
   Flame, 
   ShieldAlert, 
   Cpu, 
-  Layers, 
   Sparkles,
   Info,
-  CheckCircle2
+  CheckCircle2,
+  AlertTriangle,
+  Server,
+  Undo2
 } from 'lucide-react';
 import { 
   HardwareProfile, 
@@ -20,20 +22,124 @@ import {
   debunkedMythsList,
   CortexFunction 
 } from '../data/optimizerData';
-import { generateV7PowershellMaster, generateV6BatchMaster } from '../utils/scriptTemplates';
+import { generateV7PowershellMaster } from '../utils/scriptTemplates';
 import { downloadSingleFile } from '../utils/zipGenerator';
+import { OperationResult } from '../services/nativeBridge';
 
 interface QuickRunTerminalProps {
   hardware: HardwareProfile;
+  isNativeConnected?: boolean;
+  activeOperation?: string | null;
+  onApplyOp?: (opId: string) => Promise<OperationResult>;
+  onRestoreOp?: (opId: string) => Promise<OperationResult>;
 }
 
-export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) => {
+interface FunctionNativeMapping {
+  operationId?: string;
+  restoreOperationId?: string;
+  isImplemented: boolean;
+  statusLabel: string;
+  implementationNote?: string;
+  canRestore?: boolean;
+}
+
+export const functionNativeMappings: Record<string, FunctionNativeMapping> = {
+  'f-bestia': {
+    operationId: 'gaming.cs2.priority',
+    restoreOperationId: 'gaming.cs2.priority.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Fijar Prioridad Alta CS2 con Respaldo',
+    canRestore: true,
+  },
+  'f-torneo': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Regla de seguridad: La suite protege la estabilidad del sistema y no finaliza explorer.exe arbitrariamente.',
+  },
+  'f-nucleo': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programado para fase 2 con validación UAC y política de exclusiones de seguridad.',
+  },
+  'f-timers': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programado para fase 2: configuración BCDedit nativa con verificación TSC.',
+  },
+  'f-gpu': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programado para fase 2: ajuste de registro HAGS y MPO con backup previo.',
+  },
+  'f-stutter': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programado para fase 2: purga de Standby List vía API de memoria Windows.',
+  },
+  'f-red': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programado para fase 2: TcpAckFrequency y TCPNoDelay con restauración de red.',
+  },
+  'f-debloat': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programado para fase 2: desinstalación de paquetes UWP con lista blanca segura.',
+  },
+  'f-servicios': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programado para fase 2: gestor de perfiles de servicios con snapshot original.',
+  },
+  'f-vbs': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programado para fase 3: alternador VBS con confirmación y reinicio.',
+  },
+  'f-limpieza': {
+    operationId: 'system.temp.cleanup',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Limpieza Segura de Temporales del Usuario (%TEMP%)',
+    canRestore: false,
+  },
+  'f-loop': {
+    operationId: 'gaming.cs2.detect',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Detección Activa de cs2.exe en Windows',
+    canRestore: false,
+  },
+  'f-bench': {
+    operationId: 'system.hardware.refresh',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Diagnóstico WMI en Vivo',
+    canRestore: false,
+  },
+  'f-cfg': {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Disponible en la pestaña "CS2 CFG & Video" (generación directa de autoexec.cfg y video.txt).',
+  },
+  'f-restore': {
+    operationId: 'gaming.cs2.priority.restore',
+    isImplemented: true,
+    statusLabel: 'Operación Real: Restauración de Prioridad Original desde Respaldo',
+    canRestore: false,
+  },
+};
+
+export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ 
+  hardware,
+  isNativeConnected = false,
+  activeOperation = null,
+  onApplyOp,
+  onRestoreOp
+}) => {
   const [subTab, setSubTab] = useState<'cortex' | 'master_ps1' | 'debunked'>('cortex');
   const [selectedFunc, setSelectedFunc] = useState<CortexFunction>(cortexFunctionsList[0]);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [simulationLogs, setSimulationLogs] = useState<string[]>([]);
-  const [simProgress, setSimProgress] = useState(0);
+  const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [lastResult, setLastResult] = useState<OperationResult | null>(null);
 
   const handleCopy = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -41,57 +147,99 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
     setTimeout(() => setCopiedKey(null), 2200);
   };
 
-  const handleSimulateRun = (fn: CortexFunction) => {
-    setIsSimulating(true);
-    setSimulationLogs([]);
-    setSimProgress(10);
+  const currentMapping = functionNativeMappings[selectedFunc.id] || {
+    isImplemented: false,
+    statusLabel: 'Pendiente de integración',
+    implementationNote: 'Programada para fases posteriores.'
+  };
 
-    const logs: string[] = [
-      `[INICIO] Invocando función: ${fn.title}`,
-      `[HARDWARE] Detectado: ${hardware.targetModel} (${hardware.cpuModel})`,
-      `[PRIVILEGIOS] Verificando token de Administrador de Windows... OK`,
-    ];
+  const handleExecuteRealOperation = async (fn: CortexFunction) => {
+    const mapping = functionNativeMappings[fn.id];
 
-    setTimeout(() => {
-      logs.push(`[MODO CORTEX] Aplicando: ${fn.shortDesc}`);
-      logs.push(`[FUNDAMENTO] ${fn.whyItWorks}`);
-      setSimulationLogs([...logs]);
-      setSimProgress(45);
-    }, 450);
+    if (!mapping || !mapping.isImplemented || !mapping.operationId) {
+      setTerminalLogs([
+        `[AVISO] La función '${fn.title}' está pendiente de integración en el motor nativo C#.`,
+        `[DETALLE] ${mapping?.implementationNote || 'Se incorporará en la siguiente fase de desarrollo con verificación de seguridad.'}`,
+        `[REGLA DE CONGRUENCIA] No se simula éxito artificial para operaciones que aún no están conectadas al sistema.`
+      ]);
+      return;
+    }
 
-    setTimeout(() => {
-      if (fn.id === 'f-bestia') {
-        logs.push(`[TASKKILL] Procesos secundarios purgados: OneDrive, Teams, Spotify, Chrome, Discord`);
-        logs.push(`[NET STOP] Servicios detenidos: SysMain, DiagTrack, WSearch, Spooler`);
-        logs.push(`[AFFINITY] cs2.exe fijado a P-Cores 0-3 (Máscara 15 / 0x0F) con Prioridad ALTA`);
-      } else if (fn.id === 'f-torneo') {
-        logs.push(`[KILL] explorer.exe finalizado. Liberados 420 MB de VRAM compartida para la Intel UHD`);
-        logs.push(`[INFO] Para volver al escritorio: Ctrl+Shift+Esc > Archivo > explorer.exe`);
-      } else if (fn.id === 'f-timers') {
-        logs.push(`[BCDEDIT] useplatformtick y useplatformclock eliminados (HPET de 14MHz removido)`);
-        logs.push(`[BCDEDIT] disabledynamictick = yes | tscsyncpolicy = Enhanced (TSC 4.0GHz nativo activo)`);
-      } else if (fn.id === 'f-gpu') {
-        logs.push(`[REGISTRO] OverlayTestMode = 5 (Multi-Plane Overlay MPO Fix aplicado)`);
-        logs.push(`[REGISTRO] HwSchMode = 2 (HAGS) | TdrDelay = 10`);
-        logs.push(`[FLUSH] Caché de shaders D3DSCache y shadercache/730 eliminadas para recompilar limpio`);
+    if (!isNativeConnected || !onApplyOp) {
+      setTerminalLogs([
+        `[ERROR] El motor nativo C# (EvoNativeEngine) no está conectado en http://127.0.0.1:48120.`,
+        `[INSTRUCCIÓN] Inicia el servicio en Windows ejecutando: scripts\\Start-EvoEngine.ps1`,
+        `[REGLA 5] Por seguridad, las operaciones sobre el sistema Windows requieren el motor local en tu máquina.`
+      ]);
+      return;
+    }
+
+    setIsExecuting(true);
+    setTerminalLogs([`[INICIO] Enviando orden de ejecución para: ${mapping.operationId}...`]);
+
+    try {
+      const res = await onApplyOp(mapping.operationId);
+      setLastResult(res);
+
+      if (res.logs && res.logs.length > 0) {
+        setTerminalLogs(res.logs);
       } else {
-        logs.push(`[SCRIPT] Ejecutando: ${fn.powershellCmd}`);
-        logs.push(`[RESULTADO] ${fn.expectedGain}`);
+        setTerminalLogs([
+          `[COMPLETADO] Operación '${res.operationId}' ejecutada en ${res.durationMs.toFixed(1)} ms.`,
+          res.success ? '[ESTADO] Éxito' : `[ESTADO] Error: ${res.errorMessage}`
+        ]);
       }
-      setSimulationLogs([...logs]);
-      setSimProgress(80);
-    }, 950);
+    } catch (err: any) {
+      setTerminalLogs([
+        `[ERROR DE COMUNICACIÓN] Falló la llamada al motor nativo: ${err.message}`
+      ]);
+    } finally {
+      setIsExecuting(false);
+    }
+  };
 
-    setTimeout(() => {
-      logs.push(`[COMPLETADO] Operación finalizada con éxito. Ganancia estimada: ${fn.expectedGain}`);
-      setSimulationLogs([...logs]);
-      setSimProgress(100);
-      setIsSimulating(false);
-    }, 1500);
+  const handleRestoreRealOperation = async (fn: CortexFunction) => {
+    const mapping = functionNativeMappings[fn.id];
+
+    if (!mapping || !mapping.canRestore || !mapping.operationId) {
+      return;
+    }
+
+    if (!isNativeConnected || !onRestoreOp) {
+      setTerminalLogs([
+        `[ERROR] Motor C# no conectado. No se puede consultar el respaldo ni restaurar valores originales.`
+      ]);
+      return;
+    }
+
+    setIsExecuting(true);
+    setTerminalLogs([`[RESTAURAR] Solicitando restauración de respaldo para: ${mapping.operationId}...`]);
+
+    try {
+      const res = await onRestoreOp(mapping.operationId);
+      setLastResult(res);
+
+      if (res.logs && res.logs.length > 0) {
+        setTerminalLogs(res.logs);
+      } else {
+        setTerminalLogs([
+          `[COMPLETADO] Restauración de '${res.operationId}' finalizada en ${res.durationMs.toFixed(1)} ms.`,
+          res.success ? '[ESTADO] Restaurado con éxito' : `[ESTADO] Error: ${res.errorMessage}`
+        ]);
+      }
+    } catch (err: any) {
+      setTerminalLogs([
+        `[ERROR DE RESTAURACIÓN] ${err.message}`
+      ]);
+    } finally {
+      setIsExecuting(false);
+    }
   };
 
   const block0 = `Set-ExecutionPolicy Bypass -Scope Process -Force`;
   const v7MasterPs1 = generateV7PowershellMaster();
+
+  const isCurrentOpRunning = isExecuting || (activeOperation !== null);
 
   return (
     <div className="space-y-6">
@@ -101,16 +249,22 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 mb-1.5">
               <Flame className="w-4 h-4 fill-emerald-400/20" />
-              <span>Consola Interactiva Razer Cortex 1-Click</span>
+              <span>Consola de Ejecución Real Razer Cortex (Windows 11)</span>
               <span aria-hidden="true">·</span>
-              <span>Edición V7 Ultimate (15 Modos + 110 Tweaks)</span>
+              <span className={`px-2 py-0.5 rounded text-[11px] font-mono border ${
+                isNativeConnected 
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                  : 'bg-neutral-800 text-neutral-400 border-neutral-700'
+              }`}>
+                {isNativeConnected ? 'Motor C# Conectado (127.0.0.1:48120)' : 'Motor C# Desconectado'}
+              </span>
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white">
               Centro de Control del ASUS PN64 para CS2
             </h2>
             <p className="text-xs sm:text-sm text-neutral-400 mt-1 max-w-2xl leading-relaxed">
-              Basado en los scripts probados <code className="text-emerald-300 font-mono">PN64_V7_ULTIMATE.ps1</code> y <code className="text-emerald-300 font-mono">PN64_V6_ULTIMATE.bat</code>. 
-              Ejecuta o simula cada función con fundamento físico real (confinamiento en P-Cores, MPO Fix para Intel UHD y temporizador TSC).
+              Ejecución controlada mediante identificadores estrictos resueltos por el motor nativo en C# (.NET 8).
+              No se admiten comandos arbitrarios y las operaciones críticas cuentan con copia de respaldo y restauración.
             </p>
           </div>
 
@@ -160,13 +314,16 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
                 Selecciona una función
               </span>
               <span className="text-[11px] text-emerald-400 font-mono">
-                15 funciones listas
+                15 funciones catalogadas
               </span>
             </div>
 
             <div className="space-y-1.5 max-h-[620px] overflow-y-auto pr-1 custom-scrollbar">
               {cortexFunctionsList.map((fn) => {
                 const isSelected = selectedFunc.id === fn.id;
+                const mapping = functionNativeMappings[fn.id];
+                const isOpConnected = mapping?.isImplemented ?? false;
+
                 return (
                   <button
                     key={fn.id}
@@ -191,9 +348,12 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
                           {fn.title}
                         </span>
                       </div>
-                      <p className="text-[11px] text-neutral-400 line-clamp-1 mt-0.5">
-                        {fn.shortDesc}
-                      </p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className={`w-1.5 h-1.5 rounded-full ${isOpConnected ? 'bg-emerald-400' : 'bg-neutral-500'}`} />
+                        <span className={`text-[10px] font-mono ${isOpConnected ? 'text-emerald-400 font-semibold' : 'text-neutral-500'}`}>
+                          {isOpConnected ? 'Motor C# Activo' : 'Pendiente integración'}
+                        </span>
+                      </div>
                     </div>
 
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded shrink-0 ${
@@ -213,14 +373,21 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
           <div className="lg:col-span-7 space-y-4">
             {/* Selected function card */}
             <div className="rounded-2xl bg-neutral-900 border border-neutral-800 p-5 space-y-4">
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap sm:flex-nowrap">
                 <div>
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                       Opción [{selectedFunc.num}]
                     </span>
                     <span className="text-xs text-neutral-400">
                       Categoría: {selectedFunc.category}
+                    </span>
+                    <span className={`text-[11px] px-2 py-0.5 rounded border font-mono ${
+                      currentMapping.isImplemented
+                        ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
+                        : 'bg-neutral-950 text-neutral-400 border-neutral-800'
+                    }`}>
+                      {currentMapping.isImplemented ? `Operación Real: ${currentMapping.operationId}` : 'Pendiente de integración'}
                     </span>
                   </div>
                   <h3 className="text-lg font-bold text-white">
@@ -228,15 +395,53 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
                   </h3>
                 </div>
 
-                <button
-                  onClick={() => handleSimulateRun(selectedFunc)}
-                  disabled={isSimulating}
-                  className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 rounded-lg shadow-sm transition-all active:scale-95 shrink-0"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>{isSimulating ? 'Simulando...' : 'Probar en Terminal'}</span>
-                </button>
+                {/* Real Execution Buttons */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {currentMapping.canRestore && (
+                    <button
+                      onClick={() => handleRestoreRealOperation(selectedFunc)}
+                      disabled={isCurrentOpRunning || !isNativeConnected}
+                      title="Restaura la prioridad original de cs2.exe guardada en el respaldo"
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-neutral-300 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 disabled:opacity-40 rounded-lg shadow-sm transition-all active:scale-95"
+                    >
+                      <Undo2 className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Restaurar</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => handleExecuteRealOperation(selectedFunc)}
+                    disabled={isCurrentOpRunning}
+                    className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg shadow-sm transition-all active:scale-95 ${
+                      !currentMapping.isImplemented
+                        ? 'text-neutral-400 bg-neutral-800/80 border border-neutral-700 cursor-not-allowed'
+                        : isNativeConnected
+                        ? 'text-neutral-950 bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50'
+                        : 'text-neutral-300 bg-neutral-800 border border-neutral-700 hover:bg-neutral-700'
+                    }`}
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>
+                      {isCurrentOpRunning 
+                        ? 'Ejecutando...' 
+                        : currentMapping.isImplemented 
+                        ? 'Ejecutar operación' 
+                        : 'Pendiente de integración'}
+                    </span>
+                  </button>
+                </div>
               </div>
+
+              {/* Status Note if pending */}
+              {!currentMapping.isImplemented && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex items-start gap-2">
+                  <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-white block font-semibold mb-0.5">Estado: Pendiente de integración</strong>
+                    <p>{currentMapping.implementationNote}</p>
+                  </div>
+                </div>
+              )}
 
               <div className="text-xs text-neutral-300 leading-relaxed bg-neutral-950/60 p-3.5 rounded-xl border border-neutral-800/80">
                 <p className="font-semibold text-neutral-200 mb-1">¿Qué hace exactamente?</p>
@@ -268,7 +473,7 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
               {/* Commands with 1-click copy */}
               <div className="space-y-2 pt-2 border-t border-neutral-800/80">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-neutral-400 font-medium">Comando PowerShell V7:</span>
+                  <span className="text-neutral-400 font-medium">Comando PowerShell V7 de referencia:</span>
                   <button
                     onClick={() => handleCopy(selectedFunc.powershellCmd, 'ps-cmd')}
                     className="flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-mono text-xs"
@@ -280,26 +485,19 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
                 <div className="p-2.5 rounded-lg bg-neutral-950 font-mono text-xs text-neutral-200 border border-neutral-800 overflow-x-auto">
                   <code>{selectedFunc.powershellCmd}</code>
                 </div>
-
-                <div className="flex items-center justify-between text-xs pt-1">
-                  <span className="text-neutral-400 font-medium">Equivalente en Batch V6:</span>
-                  <span className="text-neutral-400 font-mono text-[11px]">
-                    {selectedFunc.batchCmd}
-                  </span>
-                </div>
               </div>
             </div>
 
-            {/* Live Terminal Output Box */}
+            {/* Live Real Terminal Output Box */}
             <div className="rounded-2xl bg-neutral-950 border border-neutral-800 overflow-hidden shadow-2xl">
               <div className="flex items-center justify-between px-4 py-2.5 bg-neutral-900 border-b border-neutral-800 text-xs">
                 <div className="flex items-center gap-2 font-mono text-neutral-400">
                   <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Terminal Virtual — ASUS PN64 PowerShell Engine</span>
+                  <span>Consola de Salida del Motor C# .NET 8 (Windows 11)</span>
                 </div>
-                {simulationLogs.length > 0 && (
+                {terminalLogs.length > 0 && (
                   <button
-                    onClick={() => setSimulationLogs([])}
+                    onClick={() => setTerminalLogs([])}
                     className="flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-300"
                   >
                     <RotateCcw className="w-3 h-3" />
@@ -308,30 +506,30 @@ export const QuickRunTerminal: React.FC<QuickRunTerminalProps> = ({ hardware }) 
                 )}
               </div>
 
-              {/* Progress bar */}
-              {isSimulating && (
-                <div className="w-full bg-neutral-900 h-1">
-                  <div 
-                    className="bg-emerald-400 h-1 transition-all duration-300"
-                    style={{ width: `${simProgress}%` }}
-                  />
+              {/* Progress bar when executing */}
+              {isExecuting && (
+                <div className="w-full bg-neutral-900 h-1 overflow-hidden">
+                  <div className="bg-emerald-400 h-1 w-full animate-pulse" />
                 </div>
               )}
 
-              <div className="p-4 font-mono text-xs min-h-[160px] max-h-[220px] overflow-y-auto space-y-1.5 custom-scrollbar bg-neutral-950">
-                {simulationLogs.length === 0 ? (
+              <div className="p-4 font-mono text-xs min-h-[170px] max-h-[250px] overflow-y-auto space-y-1.5 custom-scrollbar bg-neutral-950">
+                {terminalLogs.length === 0 ? (
                   <div className="text-neutral-600 italic py-8 text-center">
-                    Haz clic en "Probar en Terminal" arriba para simular la ejecución y verificar los comandos paso a paso.
+                    Selecciona una función con motor activo y presiona "Ejecutar operación" para procesar la orden en Windows 11.
                   </div>
                 ) : (
-                  simulationLogs.map((log, index) => {
-                    const isSuccess = log.includes('[OK]') || log.includes('[COMPLETADO]');
-                    const isWarn = log.includes('[!]') || log.includes('[INFO]');
+                  terminalLogs.map((log, index) => {
+                    const isSuccess = log.includes('[OK]') || log.includes('[COMPLETADO]') || log.includes('[Éxito]');
+                    const isWarn = log.includes('[!]') || log.includes('[INFO]') || log.includes('[AVISO]');
+                    const isErr = log.includes('[ERROR]') || log.includes('[ERROR CRÍTICO]');
                     return (
                       <div 
                         key={index} 
                         className={`leading-relaxed ${
-                          isSuccess 
+                          isErr
+                            ? 'text-rose-400 font-semibold'
+                            : isSuccess 
                             ? 'text-emerald-400 font-semibold' 
                             : isWarn 
                             ? 'text-amber-300' 

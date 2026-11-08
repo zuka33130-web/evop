@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Microsoft.Extensions.Logging;
@@ -9,6 +10,7 @@ public interface ISecurityService
 {
     bool IsElevated();
     bool ValidateWhitelistedAction(string actionId);
+    IReadOnlySet<string> AllowedActions { get; }
 }
 
 public class SecurityService : ISecurityService
@@ -16,10 +18,22 @@ public class SecurityService : ISecurityService
     private readonly ILogger<SecurityService> _logger;
     private readonly HashSet<string> _whitelistedActions = new(StringComparer.OrdinalIgnoreCase)
     {
+        // Operaciones de Diagnóstico y Estado
         "diagnostics.system_report",
         "diagnostics.refresh",
-        "status.ping"
+        "status.ping",
+
+        // Operaciones Reales del Motor (Implementación 01)
+        "system.hardware.refresh",
+        "system.processes.list",
+        "gaming.cs2.detect",
+        "gaming.cs2.launch",
+        "gaming.cs2.priority",
+        "gaming.cs2.priority.restore",
+        "system.temp.cleanup"
     };
+
+    public IReadOnlySet<string> AllowedActions => _whitelistedActions;
 
     public SecurityService(ILogger<SecurityService> logger)
     {

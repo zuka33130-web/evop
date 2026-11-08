@@ -31,6 +31,7 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Services.AddSingleton<ISecurityService, SecurityService>();
 builder.Services.AddSingleton<IBackupManager, BackupManager>();
 builder.Services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
+builder.Services.AddSingleton<IOptimizationService, OptimizationService>();
 
 // CORS: Permitir exclusivamente solicitudes de clientes locales (Vite dev server, Tauri, etc.)
 builder.Services.AddCors(options =>
@@ -58,7 +59,7 @@ var process = Process.GetCurrentProcess();
 // Middleware de logging y cabeceras de seguridad
 app.Use(async (context, next) =>
 {
-    context.Response.Headers.Append("X-Evo-Engine-Version", "1.0.0");
+    context.Response.Headers.Append("X-Evo-Engine-Version", "1.1.0");
     context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
     await next();
 });
@@ -71,8 +72,8 @@ app.MapGet("/api/status", (ISecurityService security) =>
 
     return Results.Ok(new EngineStatusResponse(
         IsReady: true,
-        Version: "1.0.0",
-        EngineName: "EvoNativeEngine (C# .NET 8 Core)",
+        Version: "1.1.0",
+        EngineName: "EvoNativeEngine (C# .NET 8 Real Operations Engine)",
         IsElevated: isElevated,
         ProcessId: process.Id,
         UptimeSeconds: Math.Round(uptime, 2),
@@ -83,7 +84,12 @@ app.MapGet("/api/status", (ISecurityService security) =>
         {
             "GET /api/status",
             "GET /api/diagnostics",
-            "POST /api/diagnostics/refresh"
+            "POST /api/diagnostics/refresh",
+            "GET /api/operations",
+            "POST /api/operations/{id}/apply",
+            "POST /api/operations/{id}/restore",
+            "GET /api/operations/history",
+            "GET /api/operations/{id}/status"
         }
     ));
 });
@@ -131,20 +137,56 @@ app.MapPost("/api/diagnostics/refresh", async (IDiagnosticsService diagnostics, 
     }
 });
 
+// Endpoints de Operaciones Reales (Implementación 01)
+// Catálogo de operaciones disponibles
+app.MapGet("/api/operations", async (IOptimizationService ops) =>
+{
+    var catalog = await ops.GetCatalogAsync();
+    return Results.Ok(catalog);
+});
+
+// Aplicar operación real
+app.MapPost("/api/operations/{id}/apply", async (string id, IOptimizationService ops) =>
+{
+    var result = await ops.ApplyOperationAsync(id);
+    return Results.Ok(result);
+});
+
+// Restaurar operación
+app.MapPost("/api/operations/{id}/restore", async (string id, IOptimizationService ops) =>
+{
+    var result = await ops.RestoreOperationAsync(id);
+    return Results.Ok(result);
+});
+
+// Historial de operaciones ejecutadas
+app.MapGet("/api/operations/history", async (IOptimizationService ops) =>
+{
+    var history = await ops.GetHistoryAsync();
+    return Results.Ok(history);
+});
+
+// Consultar estado de una operación
+app.MapGet("/api/operations/{id}/status", async (string id, IOptimizationService ops) =>
+{
+    var status = await ops.GetOperationStatusAsync(id);
+    return Results.Ok(status);
+});
+
 // Endpoint raíz informativo
 app.MapGet("/", () => Results.Json(new
 {
     name = "EVOOPTIMIZER Native Engine",
-    version = "1.0.0",
+    version = "1.1.0",
     status = "Active",
     listenAddress = $"http://127.0.0.1:{port}",
-    docs = "Visita /api/status o /api/diagnostics desde la aplicación web o cliente Tauri."
+    docs = "Motor de Operaciones Reales de Windows 11 conectado. Visita /api/operations para ver el catálogo."
 }));
 
 app.Logger.LogInformation("=================================================");
-app.Logger.LogInformation("EVOOPTIMIZER Native Engine - Windows 11 Optimization Bridge");
+app.Logger.LogInformation("EVOOPTIMIZER Native Engine 1.1 - Motor Real de Operaciones");
 app.Logger.LogInformation("Escuchando en: http://127.0.0.1:{Port}", port);
-app.Logger.LogInformation("Seguridad: Modo de solo lectura activado (Regla 5)");
+app.Logger.LogInformation("Seguridad: Enlace exclusivo Loopback (Regla 5)");
 app.Logger.LogInformation("=================================================");
 
 app.Run();

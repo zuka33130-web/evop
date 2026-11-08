@@ -42,11 +42,16 @@ export default function App() {
     connectionStatus,
     engineInfo,
     diagnostics,
+    catalog,
+    history,
     error: nativeError,
     isScanning,
     reconnect,
     refreshScan,
-    isConnected
+    isConnected,
+    activeOperation,
+    applyOp,
+    restoreOp
   } = useNativeBridge();
 
   const handleApplyRealHardware = (diag: SystemHardwareReport) => {
@@ -326,6 +331,8 @@ export default function App() {
             onReconnect={reconnect}
             onRefresh={refreshScan}
             onApplyRealHardware={handleApplyRealHardware}
+            catalog={catalog}
+            history={history}
           />
         )}
 
@@ -336,7 +343,13 @@ export default function App() {
 
         {/* Tab 2: 15 Modos Cortex */}
         {activeTab === 'runner' && (
-          <QuickRunTerminal hardware={hardware} />
+          <QuickRunTerminal 
+            hardware={hardware} 
+            isNativeConnected={isConnected}
+            activeOperation={activeOperation}
+            onApplyOp={applyOp}
+            onRestoreOp={restoreOp}
+          />
         )}
 
         {/* Tab 3: 110 Tweaks Explorer */}

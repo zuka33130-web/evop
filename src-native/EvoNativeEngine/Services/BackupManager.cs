@@ -10,12 +10,17 @@ public interface IBackupManager
     string BackupDirectory { get; }
     Task<string> CreateSnapshotAsync(string name, object data);
     Task<T?> ReadSnapshotAsync<T>(string snapshotPath);
+    Task SaveStateAsync<T>(string operationId, T state);
+    Task<T?> GetLastStateAsync<T>(string operationId);
+    bool HasBackup(string operationId);
+    Task ClearBackupAsync(string operationId);
 }
 
 public class BackupManager : IBackupManager
 {
     private readonly ILogger<BackupManager> _logger;
     private readonly string _backupDir;
+    private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 
     public string BackupDirectory => _backupDir;
 
@@ -47,9 +52,7 @@ public class BackupManager : IBackupManager
         string safeName = Path.GetFileNameWithoutExtension(name).Replace(" ", "_");
         string filePath = Path.Combine(_backupDir, $"backup_{safeName}_{timestamp}.json");
 
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        string json = JsonSerializer.Serialize(data, options);
-
+        string json = JsonSerializer.Serialize(data, _jsonOptions);
         await File.WriteAllTextAsync(filePath, json);
         _logger.LogInformation("Copia de respaldo generada exitosamente en: {Path}", filePath);
 
@@ -66,5 +69,63 @@ public class BackupManager : IBackupManager
 
         string json = await File.ReadAllTextAsync(snapshotPath);
         return JsonSerializer.Deserialize<T>(json);
+    }
+
+    private string GetLatestBackupPath(string operationId)
+    {
+        string safeId = operationId.Replace(".", "_").Replace("/", "_").Replace("\\", "_");
+        return Path.Combine(_backupDir, $"state_{safeId}_latest.json");
+    }
+
+    public async Task SaveStateAsync<T>(string operationId, T state)
+    {
+        string path = GetLatestBackupPath(operationId);
+        string json = JsonSerializer.Serialize(state, _jsonOptions);
+        await File.WriteAllTextAsync(path, json);
+        _logger.LogInformation("Estado previo guardado para la operación '{OperationId}' en {Path}", operationId, path);
+    }
+
+    public async Task<T?> GetLastStateAsync<T>(string operationId)
+    {
+        string path = GetLatestBackupPath(operationId);
+        if (!File.Exists(path))
+        {
+            return default;
+        }
+
+        try
+        {
+            string json = await File.ReadAllTextAsync(path);
+            return JsonSerializer.Deserialize<T>(json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error al leer el estado previo de '{OperationId}'", operationId);
+            return default;
+        }
+    }
+
+    public bool HasBackup(string operationId)
+    {
+        string path = GetLatestBackupPath(operationId);
+        return File.Exists(path);
+    }
+
+    public Task ClearBackupAsync(string operationId)
+    {
+        string path = GetLatestBackupPath(operationId);
+        if (File.Exists(path))
+        {
+            try
+            {
+                File.Delete(path);
+                _logger.LogInformation("Copia de respaldo eliminada tras restauración para '{OperationId}'", operationId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudo eliminar archivo de respaldo {Path}", path);
+            }
+        }
+        return Task.CompletedTask;
     }
 }

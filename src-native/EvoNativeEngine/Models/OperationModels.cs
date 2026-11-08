@@ -1,0 +1,74 @@
+using System;
+using System.Collections.Generic;
+
+namespace EvoNativeEngine.Models;
+
+public record OperationCatalogItem(
+    string Id,
+    string Name,
+    string Description,
+    string Category,
+    bool RequiresElevation,
+    bool CanRestore,
+    bool IsImplemented
+);
+
+public record OperationResult(
+    bool Success,
+    string OperationId,
+    string ActionType, // "apply" o "restore"
+    DateTime TimestampUtc,
+    double DurationMs,
+    List<string> Logs,
+    object? PreviousState,
+    object? CurrentState,
+    string? ErrorMessage,
+    bool Restored
+);
+
+public record OperationHistoryItem(
+    string Id,
+    string OperationId,
+    string ActionType,
+    DateTime TimestampUtc,
+    bool Success,
+    double DurationMs,
+    string Summary,
+    string? ErrorMessage
+);
+
+public record OperationStatusResponse(
+    string OperationId,
+    bool IsImplemented,
+    bool CanRestore,
+    bool HasBackup,
+    DateTime? LastRunUtc,
+    object? CurrentState,
+    string? Message
+);
+
+public record ProcessSummaryItem(
+    int Id,
+    string Name,
+    long WorkingSetBytes,
+    double WorkingSetMb,
+    string PriorityClass
+);
+
+public record Cs2ProcessState(
+    bool IsRunning,
+    int? ProcessId,
+    string? PriorityClass,
+    int? ThreadCount,
+    double? WorkingSetMb,
+    DateTime? StartTimeUtc,
+    string StatusMessage
+);
+
+public record TempCleanupState(
+    int FilesDeleted,
+    int FilesSkipped,
+    long BytesFreed,
+    double MbFreed,
+    string TempDirectory
+);
