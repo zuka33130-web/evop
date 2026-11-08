@@ -7,6 +7,22 @@ public sealed record CaptureRequest(string ProcessName, string Scenario, string 
     int Width, int Height, int FpsCap, int TargetFps, int Seconds = 60);
 public sealed class BenchmarkSessionService(OperationJournal journal, IOptimizationService operations)
 {
+    public BenchmarkRun[] List() => runs.Values.OrderBy(r => r.CreatedUtc).ToArray();
+    public static object Readiness(string processName)
+    {
+        var tool = Environment.GetEnvironmentVariable("EVO_PRESENTMON_PATH");
+        var toolReady = !string.IsNullOrWhiteSpace(tool) && Path.IsPathFullyQualified(tool) && File.Exists(tool) && tool.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+        var count = 0;
+        if (OperatingSystem.IsWindows() && System.Text.RegularExpressions.Regex.IsMatch(processName, @"^[a-zA-Z0-9_. -]{1,100}\.exe$"))
+        {
+            var processes = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(processName));
+            count = processes.Length;
+            foreach (var process in processes) process.Dispose();
+        }
+        return new { Windows = OperatingSystem.IsWindows(), ToolReady = toolReady, GameInstances = count,
+            MinimumSeconds = 30, MaximumSeconds = 120, WarmupSeconds = 5,
+            Message = !OperatingSystem.IsWindows() ? "La captura requiere Windows." : !toolReady ? "Configura EVO_PRESENTMON_PATH con PresentMon CLI 2.x y reinicia el motor." : count != 1 ? "Abre una sola instancia del proceso seleccionado." : "Listo para solicitar captura. ETW verificará permisos al iniciarla." };
+    }
     public BenchmarkRun Get(Guid id) => runs.TryGetValue(id, out var run) ? run : throw new ArgumentException("Captura expirada o desconocida.");
     private readonly ConcurrentDictionary<Guid, BenchmarkRun> runs = new();
     private readonly SemaphoreSlim captureGate = new(1, 1);
@@ -37,6 +53,7 @@ public sealed class BenchmarkSessionService(OperationJournal journal, IOptimizat
             throw new InvalidOperationException("Configura EVO_PRESENTMON_PATH con la ruta absoluta a PresentMon CLI 2.x oficial. No se descarga ni ejecuta un binario desde la web.");
         var game = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(request.ProcessName));
         var gameCount = game.Length;
+        var capturedPid = gameCount == 1 ? game[0].Id : 0;
         foreach (var process in game) process.Dispose();
         if (gameCount != 1) throw new InvalidOperationException("Abre exactamente una instancia del juego antes de capturar.");
         if (!await captureGate.WaitAsync(0, cancellationToken)) throw new InvalidOperationException("Ya hay una captura en curso.");
@@ -47,7 +64,7 @@ public sealed class BenchmarkSessionService(OperationJournal journal, IOptimizat
             Directory.CreateDirectory(directory);
             using var process = new Process { StartInfo = new ProcessStartInfo(tool)
             { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true } };
-            foreach (var arg in new[] { "--process_name", request.ProcessName, "--output_file", file,
+            foreach (var arg in new[] { "--process_id", capturedPid.ToString(System.Globalization.CultureInfo.InvariantCulture), "--output_file", file,
                 "--timed", request.Seconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 "--terminate_after_timed", "--no_console_stats" }) process.StartInfo.ArgumentList.Add(arg);
             var startRevision = journal.Revision;
@@ -78,7 +95,7 @@ public sealed class BenchmarkSessionService(OperationJournal journal, IOptimizat
                 request.Scenario, request.Configuration, request.Width, request.Height, request.FpsCap,
                 request.TargetFps, 5));
             measured = measured with { Provenance = "NativeCapture", CaptureStartedUtc = startedUtc,
-                OperationRevision = startRevision == journal.Revision ? startRevision : null, SystemSamples = systemSamples };
+                OperationRevision = startRevision == journal.Revision ? startRevision : null, SystemSamples = systemSamples, RequestedSeconds = request.Seconds, CapturedProcessId = capturedPid };
             runs[measured.Id] = measured;
             return measured;
             }

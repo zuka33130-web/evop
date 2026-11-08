@@ -51,10 +51,9 @@ export const NativeDiagnosticsCard: React.FC<NativeDiagnosticsCardProps> = ({
 }) => {
   const [copiedCmd, setCopiedCmd] = React.useState<string | null>(null);
 
-  const handleCopy = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedCmd(id);
-    setTimeout(() => setCopiedCmd(null), 2000);
+  const handleCopy = async (text: string, id: string) => {
+    try { await navigator.clipboard.writeText(text); setCopiedCmd(id); setTimeout(() => setCopiedCmd(null), 2000); }
+    catch { window.alert('No se pudo copiar. Selecciona el comando y cópialo manualmente.'); }
   };
 
   const isConnected = status === 'connected';

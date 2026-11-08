@@ -211,6 +211,12 @@ await gaming.RetireExpiredAsync();
 Assert(!gameBackups.HasBackup(GameOptimizationService.BackupKey) && gameBackups.Archives > 0 && priorState == gameProvider.State, "Archive expired snapshot without modifying a new process");
 Console.WriteLine("PASS: expired game recovery keeps archives and refuses active-instance discard.");
 
+var timelineTest = FrameBenchmarkService.BuildTimeline(Enumerable.Repeat(10d, 200).ToArray());
+Assert(timelineTest.Length == 2 && timelineTest.All(p => p.Frames == 100 && Math.Abs(p.AverageFps - 100) < .000001), "Timeline uses measured intervals rather than arithmetic instant FPS");
+var measuredIntervals = new[] { 10d, 20d, 30d };
+Assert(Math.Abs(FrameBenchmarkService.Calculate(measuredIntervals, 60).AverageFps - 50) < .000001, "Average FPS equals frame intervals / measured time, not average of reciprocal intervals");
+Console.WriteLine("PASS: FPS formula and timeline bins are deterministic over measured intervals.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();

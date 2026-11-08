@@ -9,9 +9,10 @@ public sealed record BenchmarkInput(string Csv, string ProcessName, string Scena
 public sealed record FrameMetrics(int Frames, int RejectedRows, double Seconds, double AverageFps,
     double OnePercentLowFps, double PointOnePercentLowFps, double P50Ms, double P95Ms, double P99Ms,
     double P999Ms, double BudgetMissPercent, double StutterPercent, double CoefficientOfVariation);
+public sealed record FrameBucket(int Second, int Frames, double AverageFps);
 public sealed record BenchmarkRun(Guid Id, DateTime CreatedUtc, string ProcessName, string Scenario,
     string Configuration, int Width, int Height, int FpsCap, int TargetFps, FrameMetrics Metrics,
-    string SourceColumn, List<string> Warnings, string SourceSha256, string Provenance = "ImportedCsv", long? OperationRevision = null, DateTime? CaptureStartedUtc = null, RealtimeTelemetryData[]? SystemSamples = null);
+    string SourceColumn, List<string> Warnings, string SourceSha256, string Provenance = "ImportedCsv", long? OperationRevision = null, DateTime? CaptureStartedUtc = null, RealtimeTelemetryData[]? SystemSamples = null, FrameBucket[]? Timeline = null, int? RequestedSeconds = null, int? CapturedProcessId = null);
 public sealed record RankedConfiguration(string Configuration, int Width, int Height, int FpsCap, int Runs,
     double MedianLowFps, double MedianP99Ms, double MedianBudgetMissPercent, bool MeetsTarget, bool Provisional);
 public sealed record BenchmarkComparison(List<RankedConfiguration> Rankings, string Decision, string Definition);
@@ -64,6 +65,7 @@ public static class FrameBenchmarkService
             if (!double.TryParse(fields[frameIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out var ms) || !double.IsFinite(ms) || ms <= 0)
             { rejected++; continue; }
             elapsed += ms / 1000;
+            if (!double.IsFinite(elapsed) || elapsed > 86400) throw new ArgumentException("La captura supera 24 horas de intervalos; revisa la unidad del CSV.");
             if (elapsed <= input.WarmupSeconds) continue;
             samples.Add(ms); // Never discard real long frames as outliers.
         }
@@ -76,12 +78,28 @@ public static class FrameBenchmarkService
         warnings.Add("Resolución, límite y escenario declarados por el usuario; el CSV no acredita que el juego los aplicó.");
         return new(Guid.NewGuid(), DateTime.UtcNow, input.ProcessName, input.Scenario, input.Configuration,
             input.Width, input.Height, input.FpsCap, input.TargetFps, metrics, source, warnings,
-            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input.Csv))));
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input.Csv))), Timeline: BuildTimeline(samples));
+    }
+
+    public static FrameBucket[] BuildTimeline(IReadOnlyList<double> samples)
+    {
+        // Whole measured intervals grouped by their starting second, never interpolated FPS.
+        var groups = new SortedDictionary<int, (int Frames, double Ms)>();
+        double elapsed = 0;
+        var bucketSeconds = Math.Max(1, Math.Ceiling(samples.Sum() / 1000 / 240));
+        foreach (var ms in samples)
+        {
+            var second = (int)(Math.Floor(elapsed / 1000 / bucketSeconds) * bucketSeconds);
+            var group = groups.GetValueOrDefault(second);
+            groups[second] = (group.Frames + 1, group.Ms + ms);
+            elapsed += ms;
+        }
+        return groups.Select(g => new FrameBucket(g.Key, g.Value.Frames, 1000 * g.Value.Frames / g.Value.Ms)).ToArray();
     }
 
     public static FrameMetrics Calculate(IReadOnlyList<double> frames, int targetFps, int rejected = 0)
     {
-        if (frames.Count == 0 || targetFps < 20 || frames.Any(v => !double.IsFinite(v) || v <= 0))
+        if (frames.Count == 0 || targetFps < 20 || targetFps > 1000 || !double.IsFinite(frames.Sum()) || frames.Any(v => !double.IsFinite(v) || v <= 0))
             throw new ArgumentException("No hay intervalos válidos o el objetivo FPS no es válido.");
         var sorted = frames.Order().ToArray();
         double Percentile(double p) => sorted[Math.Clamp((int)Math.Ceiling(p * sorted.Length) - 1, 0, sorted.Length - 1)];

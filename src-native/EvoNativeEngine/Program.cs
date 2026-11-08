@@ -257,6 +257,9 @@ app.MapPost("/api/clean/apply", async (IEvoCleanService cleanService) =>
     return Results.Ok(result);
 });
 
+app.MapGet("/api/benchmarks/runs", (BenchmarkSessionService sessions) => Results.Ok(sessions.List()));
+app.MapGet("/api/benchmarks/readiness", (string? processName) => Results.Ok(BenchmarkSessionService.Readiness(processName ?? "cs2.exe")));
+
 // Measured frame intervals only. Session IDs are server-owned and expire on restart.
 app.MapPost("/api/benchmarks/import", (BenchmarkInput input, BenchmarkSessionService sessions) =>
 {
