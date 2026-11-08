@@ -268,6 +268,26 @@ Assert(packageReceipt.Results.All(r => r.Success) && (await packageProvider.List
 Assert((await debloat.RestoreAsync(packageReceipt.Id)).Results.Last().Success, "Optional package restore verified without claiming data recovery");
 Console.WriteLine($"PASS: {OptimizationLibrary.Definitions.Count} new actions, exact backups, permissions, plan isolation, Beast dependencies and Appx allowlist.");
 
+if (OperatingSystem.IsWindows())
+{
+    var fixturePath = @"Software\EvoOptimizerTests\Library_" + Guid.NewGuid().ToString("N");
+    var windowsBackend = new WindowsLibraryBackend();
+    var fixture = new LibraryDefinition("fixture.registry", "Isolated registry test", "Tests", "RegistryDword", "HKCU", fixturePath, "Value", "1", "fixture", "fixture");
+    try
+    {
+        var absent = windowsBackend.Read(fixture);
+        Assert(!absent.Exists, "Isolated HKCU fixture starts absent");
+        windowsBackend.Write(fixture, new(true,"RegistryDword","1"));
+        Assert(windowsBackend.Read(fixture) == new LibraryValue(true,"RegistryDword","1"), "Real Windows DWORD write/read");
+        windowsBackend.Write(fixture, new(true,"RegistryString","original exact string"));
+        Assert(windowsBackend.Read(fixture) == new LibraryValue(true,"RegistryString","original exact string"), "Real Windows string type/value readback");
+        windowsBackend.Write(fixture, absent);
+        Assert(windowsBackend.Read(fixture) == absent, "Real Windows restore original absence");
+    }
+    finally { Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(fixturePath, false); }
+    Console.WriteLine("PASS: actual isolated Windows HKCU backend write/read/type/absence fixture.");
+}
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();

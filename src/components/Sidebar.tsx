@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { LayoutDashboard, Zap, Trash2, Crosshair, History, BookOpen, Menu, X, ScanLine, Cpu, ArrowUpRight } from 'lucide-react';
+import { LayoutDashboard, Zap, Trash2, Crosshair, History, BookOpen, Menu, X, ScanLine, Cpu, ArrowUpRight, Rocket } from 'lucide-react';
 const groups = [
   { name: 'WORKSPACE', items: [
     { id: 'dashboard', label: 'Panel de control', icon: LayoutDashboard },
     { id: 'stability', label: 'Estabilidad y 1% Low', icon: Crosshair },
+    { id: 'studio', label: 'Plantillas y Modo Bestia', icon: Rocket },
     { id: 'native-operations', label: 'Operaciones Windows', icon: Zap },
   ] },
   { name: 'TU EQUIPO', items: [

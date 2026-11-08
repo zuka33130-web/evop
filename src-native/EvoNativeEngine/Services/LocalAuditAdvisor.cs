@@ -52,9 +52,20 @@ public sealed class LocalAuditAdvisor(IDiagnosticsService diagnostics, IOptimiza
         }
         top = top.OrderByDescending(p => p.WorkingSetMb).Take(15).ToList();
         var recommendations = Recommend(hardware, top, startup.Count);
+        var backend = new WindowsLibraryBackend();
+        try
+        {
+            var dvr = backend.Read(OptimizationLibrary.Definitions["library.gaming.background_recording"]);
+            if (dvr.Exists && dvr.Value == "1") recommendations.Add(new("game-dvr", "Revisar grabación de fondo configurada", "GameDVR_Enabled=1 en el registro del usuario. No acredita una grabación activa.",
+                "Si no necesitas capturas retrospectivas de Xbox, prueba desactivar esa opción y mide la misma escena.", "Pierdes capturas de fondo de Game DVR; OBS no se modifica.", "library.gaming.background_recording", true));
+        }
+        catch { warnings.Add("No se pudo verificar la configuración Game DVR; no se infiere su estado."); }
+        if (top.Any(p => WindowsOptionalApplications.AllowedName(p.Name) && p.WorkingSetMb >= 256))
+            recommendations.Add(new("optional-apps", "Revisar apps opcionales antes de la partida", "En la muestra hay aplicaciones opcionales con al menos 256 MB de working set cada una. Puede haber memoria compartida.",
+                "Abre Plantillas y Modo Bestia, guarda el trabajo y selecciona qué cerrar. No se suman working sets como supuesta RAM liberada.", "Cerrar puede perder trabajo, voz o notificaciones. No se selecciona nada automáticamente.", null, false));
         var catalog = await operations.GetCatalogAsync();
         recommendations = recommendations.Select(r => r with { OperationId = catalog.Any(c => c.Id == r.OperationId && c.IsImplemented) ? r.OperationId : null }).ToList();
-        return new(DateTime.UtcNow, "EVO Local Advisor / reglas v1 (sin LLM)", hardware,
+        return new(DateTime.UtcNow, "EVO Local Advisor / reglas v2 (sin LLM)", hardware,
             software.DistinctBy(s => (s.Name, s.Version)).OrderBy(s => s.Name).Take(500).ToList(), top,
             startup.Distinct().Order().ToList(), recommendations, warnings);
     }

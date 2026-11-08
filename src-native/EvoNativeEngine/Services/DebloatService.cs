@@ -51,6 +51,8 @@ public sealed class WindowsOptionalPackages : IOptionalPackages
     {
         Literal(package.Name);
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps") + Path.DirectorySeparatorChar;
+        if (!package.PackageFullName.StartsWith(package.Name + "_", StringComparison.Ordinal) || Path.GetFileName(package.InstallLocation.TrimEnd('\\', '/')) != package.PackageFullName)
+            throw new IOException("Identidad/ruta de paquete incompatible.");
         var path = Path.GetFullPath(Path.Combine(package.InstallLocation, "AppxManifest.xml"));
         if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) throw new IOException("Archivos ya no disponibles. Reinstala la aplicación desde Microsoft Store; no se promete recuperación de datos.");
         var directory = new DirectoryInfo(package.InstallLocation);
@@ -86,7 +88,7 @@ public sealed class DebloatService(IOptionalPackages packages, IBackupManager ba
         await gate.WaitAsync();
         try
         {
-            var candidates = (await packages.ListAsync()).Where(p => Packages.Any(a => a.Name == p.Name) && !p.IsFramework && !p.NonRemovable).ToArray();
+            var candidates = (await packages.ListAsync()).Where(p => Packages.Any(a => a.Name == p.Name) && !p.IsFramework && !p.NonRemovable).GroupBy(p => p.Name).Where(group => group.Count() == 1).Select(group => group.Single()).ToArray();
             active = new(Guid.NewGuid(), DateTime.UtcNow.AddMinutes(5), candidates);
             return new { Plan = active, Definitions = Packages, Warning = "Solo usuario actual; sin AllUsers, provisionados, Store, frameworks, Gaming Services ni WebView2. Desinstalar puede borrar datos; reinstalación no garantizada. No se promete FPS." };
         }

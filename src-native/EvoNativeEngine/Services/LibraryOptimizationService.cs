@@ -122,9 +122,9 @@ public sealed class LibraryOptimizationService(IBackupManager backups, ISecurity
     {
         if (snapshot is null || snapshot.Version != 1 || snapshot.Id != id || snapshot.Original is null) throw new IOException("Respaldo no válido.");
         var value = snapshot.Original;
-        if (d.Kind == "Power" && (value.Kind != "Power" || !Guid.TryParse(value.Context, out var scheme) || scheme == Guid.Empty || !uint.TryParse(value.Value, out _)) ||
-            d.Kind == "Service" && (value.Kind != "Service" || value.Value is not ("0" or "1")) ||
-            d.Kind.StartsWith("Registry") && (value.Kind is not ("RegistryDword" or "RegistryString") || value.Kind == "RegistryDword" && value.Exists && !int.TryParse(value.Value, out _)))
+        if (d.Kind == "Power" && (!value.Exists || value.Kind != "Power" || !Guid.TryParse(value.Context, out var scheme) || scheme == Guid.Empty || !uint.TryParse(value.Value, out _)) ||
+            d.Kind == "Service" && (!value.Exists || value.Context is not null || value.Kind != "Service" || value.Value is not ("0" or "1")) ||
+            d.Kind.StartsWith("Registry") && (value.Context is not null || value.Kind is not ("RegistryDword" or "RegistryString") || value.Kind == "RegistryDword" && value.Exists && !int.TryParse(value.Value, out _)))
             throw new IOException("Datos de respaldo incompatibles.");
     }
 }

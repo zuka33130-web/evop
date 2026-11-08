@@ -643,12 +643,9 @@ public class OptimizationService : IOptimizationService
         {
             await Task.Delay(1000);
             var procs = Process.GetProcessesByName("cs2");
-            if (procs.Length > 0)
-            {
-                confirmed = true;
-                pid = procs[0].Id;
-                break;
-            }
+            if (procs.Length > 0) { confirmed = true; pid = procs[0].Id; }
+            foreach (var candidate in procs) candidate.Dispose();
+            if (confirmed) break;
             logs.Add($"[ESPERANDO] Sondeo {i + 1}/8: cs2.exe aún inicializando en Steam...");
         }
 

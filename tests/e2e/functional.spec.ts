@@ -10,6 +10,8 @@ const diagnostic = {
   operatingSystem: { name: 'Windows de prueba', version: '11', buildNumber: 'test', architecture: 'x64', uptimeHours: 2, windowsEdition: 'Test' },
   graphicsCards: [], storageDrives: [], executionTimeMs: 2, queriedAtUtc: new Date().toISOString(), hostName: 'test', isWindowsPlatform: true, isElevated: false
 };
+const libraryFixture = { id:'library.gaming.game_mode', name:'Game Mode nativo', category:'Gaming', purpose:'Solicita modo Juego.', risk:'No garantiza más FPS.', kind:'RegistryDword', hive:'HKCU', path:'Software\\Microsoft\\GameBar', valueName:'AutoGameModeEnabled', target:'1', admin:false, restart:false, applicability:'Windows compatible.' };
+const templateFixture = { id:'gaming', name:'Gaming · base limpia', description:'Ajuste nativo revisable.', risk:'No garantiza FPS.', operations:[libraryFixture.id] };
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
@@ -18,6 +20,12 @@ test.beforeEach(async ({ page }) => {
     else if (path.startsWith('/api/diagnostics')) data = diagnostic;
     else if (path === '/api/operations') data = catalog;
     else if (path === '/api/operations/history') data = [];
+    else if (path === '/api/library') data = [libraryFixture];
+    else if (path === '/api/templates') data = [templateFixture];
+    else if (path === '/api/templates/receipts') data = [];
+    else if (path === '/api/templates/gaming/preview') data = { template:templateFixture, note:'Revisar antes de aplicar.', items:[{ definition:libraryFixture, available:true, hasBackup:false, current:{exists:false} }] };
+    else if (path === '/api/beast/preview') data = { id:'beast-plan', expiresUtc:new Date(Date.now()+120000).toISOString(), candidates:[{pid:42,name:'chrome',path:'C:/Apps/chrome.exe',workingSetMb:200}], protected:['Steam y anticheat'], warning:'Nada se cierra por defecto.' };
+    else if (path === '/api/debloat/preview') data = { plan:{id:'debloat-plan',candidates:[{name:'Microsoft.BingNews',packageFullName:'Microsoft.BingNews_test'}]}, definitions:[{name:'Microsoft.BingNews',label:'Microsoft News',loss:'Puede perder datos locales.'}], warning:'Solo usuario actual. Reinstalación no garantizada.' };
     else if (path.endsWith('/status')) data = { hasBackup: false, isImplemented: true, canRestore: true };
     else if (path.endsWith('/apply')) data = { success: false, operationId: 'cortex.mode.torneo', logs: ['Sin permiso de prueba.'], errorMessage: 'Falló la verificación', previousState: null, currentState: null };
     else if (path.endsWith('/active')) data = null;
@@ -31,7 +39,7 @@ test.beforeEach(async ({ page }) => {
 });
 test('all navigation destinations render without legacy simulations', async ({ page }) => {
   const destinations = [
-    ['Auditor local', 'Auditor local de hardware y software'], ['Operaciones Windows', 'Operaciones nativas verificables'],
+    ['Plantillas y Modo Bestia', 'Plantillas y Modo Bestia'], ['Auditor local', 'Auditor local de hardware y software'], ['Operaciones Windows', 'Operaciones nativas verificables'],
     ['Estabilidad y 1% Low', 'Laboratorio de FPS'], ['Limpieza inteligente', 'Limpieza inteligente y recuperable'],
     ['Diagnóstico', 'Diagnóstico'], ['Historial', 'Historial del motor'], ['Fuentes y herramientas', 'Fuentes técnicas y decisiones de ingeniería'],
     ['Panel de control', 'Panel de control']
@@ -112,4 +120,45 @@ test('desktop and mobile layout fit viewport with accessible navigation', async 
   await expect(page.getByRole('heading',{name:'Panel de control',exact:true})).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path:testInfo.outputPath('dashboard-mobile.png'), fullPage:true, animations:'disabled' });
+});
+
+
+test('templates require explicit selection and report real per-step outcomes', async ({ page }) => {
+  let body: unknown;
+  await page.route('**/api/templates/gaming/apply', async route => { body=route.request().postDataJSON(); await route.fulfill({json:{id:'template-receipt',templateId:'gaming',finished:true,results:[{success:true,operationId:libraryFixture.id,logs:['Valor leído y verificado.']}]}}); });
+  await page.getByRole('navigation').getByRole('button',{name:'Plantillas y Modo Bestia',exact:true}).click();
+  await page.getByRole('button',{name:'Revisar cambios',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Aplicar 0 cambios seleccionados'})).toBeDisabled();
+  await page.getByRole('checkbox',{name:/Game Mode nativo/}).check();
+  page.on('dialog', dialog=>dialog.accept());
+  await page.getByRole('button',{name:'Aplicar 1 cambios seleccionados'}).click();
+  await expect(page.getByText('ID: template-receipt',{exact:false})).toBeVisible();
+  expect(body).toEqual({selectedIds:[libraryFixture.id],confirmation:'APLICAR PLANTILLA'});
+});
+
+test('Beast mode closes nothing by default and needs typed confirmation', async ({ page }) => {
+  let body: unknown;
+  await page.route('**/api/beast/start', async route => { body=route.request().postDataJSON(); await route.fulfill({json:{id:'beast-receipt',finished:true,applications:[],operations:[{success:true,operationId:'gaming.cs2.launch',logs:['Lanzamiento solicitado.']}]}}); });
+  await page.getByRole('navigation').getByRole('button',{name:'Plantillas y Modo Bestia',exact:true}).click();
+  await page.getByRole('button',{name:'Modo Bestia · CS2',exact:true}).click();
+  await page.getByRole('button',{name:'Analizar sesión antes de lanzar',exact:true}).click();
+  await expect(page.getByRole('checkbox',{name:/chrome · PID 42/})).not.toBeChecked();
+  await expect(page.getByRole('button',{name:'Lanzar CS2 · 0 cierres elegidos'})).toBeDisabled();
+  await page.getByLabel('Confirmación Modo Bestia').fill('INICIAR MODO BESTIA');
+  await page.getByRole('button',{name:'Lanzar CS2 · 0 cierres elegidos'}).click();
+  await expect(page.getByText('ID: beast-receipt',{exact:false})).toBeVisible();
+  expect(body).toEqual({planId:'beast-plan',pids:[],forceSelected:false,applyGamingBase:false,highPriority:true,confirmation:'INICIAR MODO BESTIA'});
+});
+
+test('debloat defaults to no packages selected and warns about data loss', async ({ page }) => {
+  await page.getByRole('navigation').getByRole('button',{name:'Plantillas y Modo Bestia',exact:true}).click();
+  await page.getByRole('button',{name:'Debloat de aplicaciones',exact:true}).click();
+  await page.getByRole('button',{name:'Analizar aplicaciones opcionales',exact:true}).click();
+  await expect(page.getByRole('checkbox',{name:/Microsoft News/})).not.toBeChecked();
+  await expect(page.getByRole('button',{name:'Desinstalar 0 aplicaciones elegidas'})).toBeDisabled();
+  await page.getByRole('checkbox',{name:/Microsoft News/}).check();
+  await expect(page.getByRole('button',{name:'Desinstalar 1 aplicaciones elegidas'})).toBeDisabled();
+  await page.getByLabel('Confirmación debloat').fill('DESINSTALAR APLICACIONES');
+  await expect(page.getByRole('button',{name:'Desinstalar 1 aplicaciones elegidas'})).toBeEnabled();
+  await expect(page.getByText('Puede perder datos locales.',{exact:true})).toBeVisible();
 });

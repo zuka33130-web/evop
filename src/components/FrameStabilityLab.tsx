@@ -25,7 +25,7 @@ const abOperations = [
   ['tweak.cpu.affinity_15', 'Afinidad explícita 0–3 (puede empeorar FPS)']
 ];
 
-export function FrameStabilityLab({ connected, onBusyChange }: { connected: boolean; onBusyChange?: (busy: boolean) => void }) {
+export function FrameStabilityLab({ connected, onBusyChange, externalBusy = false }: { connected: boolean; externalBusy?: boolean; onBusyChange?: (busy: boolean) => void }) {
   const [seconds, setSeconds] = useState(60);
   const [phase, setPhase] = useState<'A' | 'B'>('A');
   const [baselineId, setBaseline] = useState('');
@@ -88,7 +88,7 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
     return data;
   }
   async function run(action: 'import' | 'capture' | 'compare') {
-    if (requestLock.current) return;
+    if (requestLock.current || externalBusy) return;
     requestLock.current = true;
     setBusy(true); setError('');
     try {
@@ -109,7 +109,7 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
     if (action !== 'evaluate' && !confirm(action === 'start'
       ? 'Se aplicará un cambio real en Windows. Conserva la misma escena y configuración para medir B. ¿Continuar?'
       : '¿Restaurar el respaldo del módulo probado?')) return;
-    if (requestLock.current) return;
+    if (requestLock.current || externalBusy) return;
     requestLock.current = true;
     setBusy(true); setError('');
     try {
@@ -144,7 +144,7 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
     <div className="lab-grid">
       <div className="instrument-card">
         <h2 className="text-sm font-semibold flex items-center gap-2"><Crosshair size={16} className="text-lime-200" /> Preparar medición</h2><p className="text-[10px] text-neutral-400 leading-6 mt-2">Abre el juego y repite una escena fija. No cambies de ventana durante la captura.</p>
-        <fieldset disabled={busy}>
+        <fieldset disabled={externalBusy || busy}>
           <label className="field-label" htmlFor="measure-process">Proceso del juego</label><input id="measure-process" className={inputClass} value={processName} onChange={e => setProcess(e.target.value)} />
           <label className="field-label" htmlFor="capture-phase">¿Qué vas a medir?</label><div id="capture-phase" className="phase-toggle"><button aria-pressed={phase === 'A'} onClick={() => setPhase('A')}>A · Antes del cambio</button><button aria-pressed={phase === 'B'} onClick={() => setPhase('B')}>B · Después</button></div>
           <label className="field-label" htmlFor="capture-seconds">Duración de la captura</label><select id="capture-seconds" className={inputClass} value={seconds} onChange={e => setSeconds(+e.target.value)}>{[30,60,90,120].map(n => <option key={n} value={n}>{n} segundos{n === 60 ? ' · recomendado' : ''}</option>)}</select>
@@ -155,8 +155,8 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
         </fieldset>
         <div className="subtle-divider" />
         <div className="text-[10px] text-neutral-400 leading-6 space-y-1"><p className="flex justify-between">Motor Windows<span>{connected ? 'Conectado' : 'Sin conexión'}</span></p><p className="flex justify-between">PresentMon CLI<span>{readiness?.toolReady ? 'Configurado' : 'No confirmado'}</span></p><p className="flex justify-between">Instancias del juego<span>{readiness?.gameInstances ?? '—'}</span></p></div>
-        <button className="primary-button w-full mt-4" disabled={!connected || busy} onClick={() => run('capture')}><Timer size={14} />{capturing ? 'Capturando…' : `Capturar fase ${phase} · ${seconds} s`}<ArrowRight size={14} /></button>
-        <button className="text-[10px] text-neutral-400 underline mt-3" disabled={!connected || busy} onClick={checkReadiness}>Verificar preparación</button>
+        <button className="primary-button w-full mt-4" disabled={!connected || externalBusy || busy} onClick={() => run('capture')}><Timer size={14} />{capturing ? 'Capturando…' : `Capturar fase ${phase} · ${seconds} s`}<ArrowRight size={14} /></button>
+        <button className="text-[10px] text-neutral-400 underline mt-3" disabled={!connected || externalBusy || busy} onClick={checkReadiness}>Verificar preparación</button>
         <p className="text-[10px] text-neutral-400 leading-6 mt-2">{readiness?.message || 'Conecta el motor local para medir en Windows.'}</p>
       </div>
       <div className="space-y-5">
@@ -169,7 +169,7 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
         ].map(([label,value,unit,help]) => <div className="instrument-card" key={String(label)}><div className="section-label" style={{fontSize:9,letterSpacing:'.6px'}}>{label}</div><p className="metric-value">{typeof value === 'number' ? value.toFixed(2) : '—'}<small>{unit}</small></p><p className="metric-foot">{help}</p></div>)}</div>
         <div className="instrument-card"><div className="flex flex-wrap justify-between gap-3 mb-5"><h2 className="text-xs font-semibold">Evolución de FPS</h2><div className="flex gap-4 text-[9px]"><span className="text-lime-200">● A · Referencia</span><span className="text-blue-300">● B · Resultado</span></div></div><div className="chart-surface"><FrameTimeline before={baseline?.timeline || (!after ? selected?.timeline : undefined)} after={after?.timeline} /></div><p className="text-[10px] text-neutral-400 mt-3">{selected ? `${selected.metrics.frames.toLocaleString()} intervalos · ${selected.metrics.seconds.toFixed(2)} s útiles · ${selected.sourceColumn} · ${selected.provenance === 'NativeCapture' ? 'Captura nativa' : 'CSV importado'}` : 'Sin captura seleccionada · no hay valores estimados'}</p></div>
         <div className="instrument-card"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold">Antes vs. después</h2><button className="text-[10px] inline-flex items-center gap-2 text-neutral-400" disabled={!runs.length} onClick={exportReport}><Download size={12} /> Exportar informe</button></div>
-          <div className="grid grid-cols-2 gap-3 mb-4"><label className="field-label">A · Referencia<select aria-label="Captura de referencia A" className={inputClass} disabled={busy} value={baselineId} onChange={e => setBaseline(e.target.value)}><option value="">Selecciona una captura</option>{runs.map((r,i) => <option key={r.id} value={r.id}>#{i+1} · {r.configuration} · {r.metrics.averageFps.toFixed(2)} FPS</option>)}</select></label><label className="field-label">B · Resultado<select aria-label="Captura de resultado B" className={inputClass} disabled={busy} value={afterId} onChange={e => setAfter(e.target.value)}><option value="">Selecciona una captura</option>{runs.map((r,i) => <option key={r.id} value={r.id}>#{i+1} · {r.configuration} · {r.metrics.averageFps.toFixed(2)} FPS</option>)}</select></label></div>
+          <div className="grid grid-cols-2 gap-3 mb-4"><label className="field-label">A · Referencia<select aria-label="Captura de referencia A" className={inputClass} disabled={externalBusy || busy} value={baselineId} onChange={e => setBaseline(e.target.value)}><option value="">Selecciona una captura</option>{runs.map((r,i) => <option key={r.id} value={r.id}>#{i+1} · {r.configuration} · {r.metrics.averageFps.toFixed(2)} FPS</option>)}</select></label><label className="field-label">B · Resultado<select aria-label="Captura de resultado B" className={inputClass} disabled={externalBusy || busy} value={afterId} onChange={e => setAfter(e.target.value)}><option value="">Selecciona una captura</option>{runs.map((r,i) => <option key={r.id} value={r.id}>#{i+1} · {r.configuration} · {r.metrics.averageFps.toFixed(2)} FPS</option>)}</select></label></div>
           {mismatch ? <p role="alert" className="notice">{mismatch}</p> : baseline && after ? <><div className="grid grid-cols-3 gap-4">{[['FPS promedio',baseline.metrics.averageFps,after.metrics.averageFps],['1% low',baseline.metrics.onePercentLowFps,after.metrics.onePercentLowFps],['P99 ms',baseline.metrics.p99Ms,after.metrics.p99Ms]].map(([label,a,b]) => <div key={String(label)}><p className="text-[10px] text-neutral-400">{label}</p><p className="text-sm mt-2 tabular-nums">{Number(a).toFixed(2)} → {Number(b).toFixed(2)}</p><p className="text-[11px] text-neutral-300 mt-1">{Number(b)>=Number(a)?'+':''}{((Number(b)/Number(a)-1)*100).toFixed(2)}%</p></div>)}</div><p className="text-[10px] text-amber-200/70 mt-5 leading-6">Diferencia descriptiva, no prueba causal. Repite ≥3 veces por fase; usa el experimento avanzado para evaluar variabilidad e intervalos de confianza. {baseline.provenance !== 'NativeCapture' || after.provenance !== 'NativeCapture' ? 'Incluye CSV importado: comparación exploratoria.' : ''}</p></> : <p className="text-[11px] text-neutral-400 leading-7">1. Captura A sin cambios. 2. Abre Operaciones y aplica un único módulo. 3. Regresa, elige fase B y repite la misma escena. Tus capturas permanecen al navegar.</p>}
         </div>
         {error && <p role="alert" className="notice">{error}</p>}
@@ -177,19 +177,19 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
       </div>
     </div>
     <details className="instrument-card"><summary className="text-xs font-semibold flex items-center gap-2"><CircleHelp size={15} /> Qué mide EVO y cómo interpretar los resultados</summary><dl className="definition-grid"><div><dt>FPS promedio</dt><dd>1000 dividido entre la media de los intervalos válidos, equivalente a intervalos / segundos medidos. No es la media de contadores de FPS instantáneos.</dd></div><div><dt>1% low y P99</dt><dd>1% low: 1000 / media del 1% de intervalos más lentos. P99: intervalo que cubre el 99% de la muestra. Los tirones reales nunca se filtran como atípicos.</dd></div><div><dt>Precisión y fuente</dt><dd>Se calcula sobre intervalos reales registrados por PresentMon. MsBetweenPresents mide presentaciones; CPUFrameTime mide cadencia CPU. Ninguna equivale necesariamente a FPS visibles del monitor o input lag. No mezclar fuentes.</dd></div><div><dt>Comparación válida</dt><dd>Mismo juego, escena, API, resolución, cap y alimentación. Cambios de temperatura, carga o servidor pueden alterar resultados. Un solo par no demuestra una mejora reproducible.</dd></div></dl></details>
-    <details className="instrument-card"><summary className="text-xs font-semibold">Importar CSV / comparar varias configuraciones</summary><p className="text-[11px] text-neutral-400 mt-3 mb-3">PresentMon CLI 2.x debe estar configurado en EVO_PRESENTMON_PATH antes de iniciar el motor. No se descarga software ni se inyecta código. También puedes analizar una captura externa.</p><input aria-label="Importar CSV PresentMon" type="file" accept=".csv,text/csv" disabled={busy} onChange={async e => { const file=e.target.files?.[0]; if(!file) return; if(file.size>24_000_000){setError('Máximo 24 MB.');return;} setCsv(await file.text());setError(''); }} /><div className="flex flex-wrap gap-3 mt-4"><button className="secondary-button" disabled={!connected || busy || !csv} onClick={() => run('import')}>Analizar CSV real</button><button className="secondary-button" disabled={!connected || busy || runs.length<2} onClick={() => run('compare')}>Comparar configuraciones</button></div></details>
+    <details className="instrument-card"><summary className="text-xs font-semibold">Importar CSV / comparar varias configuraciones</summary><p className="text-[11px] text-neutral-400 mt-3 mb-3">PresentMon CLI 2.x debe estar configurado en EVO_PRESENTMON_PATH antes de iniciar el motor. No se descarga software ni se inyecta código. También puedes analizar una captura externa.</p><input aria-label="Importar CSV PresentMon" type="file" accept=".csv,text/csv" disabled={externalBusy || busy} onChange={async e => { const file=e.target.files?.[0]; if(!file) return; if(file.size>24_000_000){setError('Máximo 24 MB.');return;} setCsv(await file.text());setError(''); }} /><div className="flex flex-wrap gap-3 mt-4"><button className="secondary-button" disabled={!connected || externalBusy || busy || !csv} onClick={() => run('import')}>Analizar CSV real</button><button className="secondary-button" disabled={!connected || externalBusy || busy || runs.length<2} onClick={() => run('compare')}>Comparar configuraciones</button></div></details>
     <details className="instrument-card"><summary className="text-xs font-semibold">Experimento avanzado · cambio controlado e intervalo de confianza</summary>
     <div className="rounded-xl border border-cyan-900 p-5 space-y-3">
       <h2 className="font-bold">Experimento A/B por optimización</h2>
       <p className="text-sm text-neutral-400">1. Captura A cinco veces sin cambios. 2. Aplica un único módulo. 3. Captura B cinco veces sin cambiar escena, resolución ni cap. 4. Evalúa y exporta. 5. Restaura y confirma con A/B/A/B. Tres repeticiones permiten iniciar, pero no emitir señal estadística.</p>
-      <select className={inputClass} disabled={busy || !!experiment} value={operation} onChange={e => setOperation(e.target.value)}>
+      <select className={inputClass} disabled={externalBusy || busy || !!experiment} value={operation} onChange={e => setOperation(e.target.value)}>
         {abOperations.map(([id, label]) => <option value={id} key={id}>{label}</option>)}
       </select>
-      {!experiment ? <button disabled={busy || !connected || runs.length < 3} className="rounded bg-cyan-600 px-4 py-2 disabled:opacity-40" onClick={() => experimentAction('start')}>Fijar capturas A y aplicar cambio real</button>
+      {!experiment ? <button disabled={externalBusy || busy || !connected || runs.length < 3} className="rounded bg-cyan-600 px-4 py-2 disabled:opacity-40" onClick={() => experimentAction('start')}>Fijar capturas A y aplicar cambio real</button>
         : <><p>Activo: {experiment.operationId} · Base: {experiment.beforeIds.length} capturas · B: {runs.filter(r => !experiment.beforeIds.includes(r.id)).length}</p>
           {!experiment.applied.success && <p className="text-rose-300">Aplicación fallida o parcial: {experiment.applied.errorMessage}. Restaura antes de continuar.</p>}
-          <div className="flex gap-3"><button disabled={busy || !connected} className="rounded border px-4 py-2" onClick={() => experimentAction('evaluate')}>Evaluar antes / después</button>
-          <button disabled={busy || !connected} className="rounded border px-4 py-2" onClick={() => experimentAction('restore')}>Restaurar módulo y cerrar</button></div></>}
+          <div className="flex gap-3"><button disabled={externalBusy || busy || !connected} className="rounded border px-4 py-2" onClick={() => experimentAction('evaluate')}>Evaluar antes / después</button>
+          <button disabled={externalBusy || busy || !connected} className="rounded border px-4 py-2" onClick={() => experimentAction('restore')}>Restaurar módulo y cerrar</button></div></>}
       <p className="text-xs text-amber-300">Solo capturas nativas vinculadas al cambio permiten emitir señal. CSV importados son exploratorios. El contador detecta otras operaciones del motor, no modificaciones externas ni cambios de escena. No se evalúan automáticamente ajustes que requieren reinicio.</p>
       {verdict && <div className="space-y-2"><h3 className="font-bold">{verdict.verdict}</h3>
         {([['1% low (↑ mejor)', verdict.lowFps], ['P99 ms (↓ mejor)', verdict.p99Ms], ['FPS medio', verdict.averageFps]] as [string, Estimate][]).map(([label, v]) =>
@@ -211,7 +211,7 @@ export function FrameStabilityLab({ connected, onBusyChange }: { connected: bool
     {!runs.length && <p className="text-xs text-neutral-400">Todavía no hay capturas. Inicia tu primera medición arriba.</p>}
     {runs.map((r, i) => <article className="rounded-xl border border-neutral-800 p-4 space-y-2" key={r.id}>
       <div className="flex justify-between gap-2"><h2 className="font-bold">#{i + 1} {r.configuration} · {r.width}×{r.height} · cap {r.fpsCap || 'libre'}</h2>
-        <button disabled={busy || !!experiment} onClick={() => { setRuns(v => v.filter(x => x.id !== r.id)); if (baselineId === r.id) setBaseline(''); if (afterId === r.id) setAfter(''); setComparison(null); }} className="text-neutral-400">Quitar</button></div>
+        <button disabled={externalBusy || busy || !!experiment} onClick={() => { setRuns(v => v.filter(x => x.id !== r.id)); if (baselineId === r.id) setBaseline(''); if (afterId === r.id) setAfter(''); setComparison(null); }} className="text-neutral-400">Quitar</button></div>
       <p className="text-sm font-mono">FPS {r.metrics.averageFps.toFixed(2)} · 1% low {r.metrics.onePercentLowFps.toFixed(2)} · P99 {r.metrics.p99Ms.toFixed(2)} ms · fuera de presupuesto {r.metrics.budgetMissPercent.toFixed(2)}% · {r.metrics.frames} frames / {r.metrics.seconds.toFixed(1)} s</p>
       <p className="text-xs text-cyan-300">{experiment ? experiment.beforeIds.includes(r.id) ? 'Fase A del experimento' : 'Fase B del experimento' : r.id === baselineId ? 'Referencia A seleccionada' : r.id === afterId ? 'Resultado B seleccionado' : 'Sin fase asignada'} · {r.provenance === 'NativeCapture' ? 'Captura nativa' : 'CSV importado'} · {r.systemSamples?.length || 0} muestras de CPU/RAM/reloj/ACPI (sensores disponibles)</p>
       {!!r.metrics.rejectedRows && <p className="text-xs text-amber-300">{r.metrics.rejectedRows} filas inválidas excluidas. Revisa la calidad de la captura.</p>}

@@ -15,6 +15,11 @@ export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog
   const [category, setCategory] = useState('all');
   const [kind, setKind] = useState('changes');
   const [query, setQuery] = useState('');
+  const [definitions, setDefinitions] = useState<Record<string, {purpose:string; risk:string; kind:string; hive:string; path:string; valueName:string; target:string; applicability:string}>>({});
+  useEffect(() => {
+    if (!connected) return;
+    fetch(`${DEFAULT_NATIVE_ENGINE_URL}/api/library`).then(r => r.ok ? r.json() : []).then(data => { if (Array.isArray(data)) setDefinitions(Object.fromEntries(data.map(d => [d.id,d]))); }).catch(() => {});
+  }, [connected]);
   const [states, setStates] = useState<Record<string, OperationStatusResponse>>({});
   const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -84,7 +89,10 @@ export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog
     {error && <p role="alert" className="text-rose-300">{error}</p>}
     {loading && <p role="status">Consultando respaldos…</p>}
     {available.map(item => {
-      const guide = operationGuide(item);
+      const d = definitions[item.id];
+      const guide = d ? { scope:`${d.purpose} Destino: ${d.kind} ${d.hive} ${d.path} / ${d.valueName} = ${d.target}.`,
+        when:d.applicability, risk:d.risk, verify:'El motor lee de nuevo el valor o estado. Esto no certifica efecto del driver ni FPS; compara la misma escena con capturas repetidas.',
+        undo:'Restaura existencia, tipo, valor y plan originales desde el respaldo. No se crea respaldo si ya tenía el valor solicitado. Servicios: solo estado de ejecución, no tipo de inicio.' } : operationGuide(item);
       const permissionBlocked = item.requiresElevation && !elevated;
       const hasBackup = states[item.id]?.hasBackup === true;
       const disabled = !connected || busy || globalBusy || permissionBlocked;

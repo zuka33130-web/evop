@@ -29,7 +29,7 @@ public sealed class WindowsOptionalApplications : IOptionalApplications
         if (process.SessionId != self.SessionId) return false;
         if (!IsProcessCritical(process.Handle, out var critical) || critical) return false;
         if (!OpenProcessToken(process.Handle, 8 /* TOKEN_QUERY */, out var token)) return false;
-        try { using var identity = new WindowsIdentity(token); if (identity.User?.Value != WindowsIdentity.GetCurrent().User?.Value) return false; }
+        try { using var identity = new WindowsIdentity(token); using var currentIdentity = WindowsIdentity.GetCurrent(); if (identity.User?.Value != currentIdentity.User?.Value) return false; }
         finally { CloseHandle(token); }
         path = process.MainModule?.FileName ?? "";
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd('\\') + "\\";

@@ -32,6 +32,8 @@ public sealed class OptimizationTemplateService(IOptimizationService operations,
                 if (d.Admin && !security.IsElevated()) throw new UnauthorizedAccessException("Necesita administrador.");
                 if (hasBackup) throw new InvalidOperationException("Ya tiene respaldo: restaura antes de incluirlo en otra plantilla.");
                 current = backend.Read(d);
+                if (current.Exists && current.Kind == d.Kind && current.Value == d.Target)
+                    throw new InvalidOperationException("Ya tiene el valor objetivo. No se necesita una escritura ni se atribuye una mejora.");
             } catch (Exception ex) { available = false; reason = ex.Message; }
             rows.Add(new { Definition = d, Available = available, Reason = reason, HasBackup = hasBackup, Current = current });
         }
@@ -91,6 +93,7 @@ public sealed class OptimizationTemplateService(IOptimizationService operations,
                         results.Add(new(false, action, "restore", DateTime.UtcNow, 0, ["Respaldo de otra sesión: no se toca."], null, null, "No se acredita propiedad del respaldo.", false));
                     else results.Add(await operations.RestoreOperationAsync(action));
                 }
+                else results.Add(new(true, action, "restore", DateTime.UtcNow, 0, ["Sin respaldo pendiente: no se modificó Windows ni se certifica una restauración externa."], null, null, null, false));
             // Preserve original application audit, append restoration; never erase failed recovery information.
             receipt = receipt with { Results = receipt.Results.Concat(results).ToList(), Restored = results.All(r => r.Success) };
             await backups.SaveStateAsync(key, receipt);
