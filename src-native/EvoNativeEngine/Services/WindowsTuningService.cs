@@ -36,7 +36,7 @@ public sealed class WindowsTuning : IWindowsTuning
         {
             process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync();
-            throw new TimeoutException("PowerShell excedió 30 segundos.");
+            throw new System.TimeoutException("PowerShell excedió 30 segundos.");
         }
         var stdout = await output;
         var stderr = await error;
