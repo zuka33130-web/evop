@@ -81,7 +81,13 @@ public class BackupManager : IBackupManager
     {
         string path = GetLatestBackupPath(operationId);
         string json = JsonSerializer.Serialize(state, _jsonOptions);
-        await File.WriteAllTextAsync(path, json);
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporary, json);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
         _logger.LogInformation("Estado previo guardado para la operación '{OperationId}' en {Path}", operationId, path);
     }
 

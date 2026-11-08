@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# .NET output
+**/bin/
+**/obj/
+dist-native/

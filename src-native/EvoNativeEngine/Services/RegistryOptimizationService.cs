@@ -8,7 +8,7 @@ namespace EvoNativeEngine.Services;
 public sealed class RegistryOptimizationService(IBackupManager backups, ISecurityService security)
 {
     private sealed record Setting(RegistryHive Hive, string Path, string Name, int Value);
-    public sealed record Snapshot(bool Exists, int Value);
+    public sealed record Snapshot(int Version, string Operation, bool Exists, int Value);
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly Dictionary<string, Setting> Settings = new()
     {
@@ -25,6 +25,7 @@ public sealed class RegistryOptimizationService(IBackupManager backups, ISecurit
     public async Task<OperationResult> ExecuteAsync(string id, bool restore)
     {
         var timer = Stopwatch.StartNew();
+        var backupKey = $"verified.v1.{id}";
         var logs = new List<string>();
         await Gate.WaitAsync();
         try
@@ -39,26 +40,33 @@ public sealed class RegistryOptimizationService(IBackupManager backups, ISecurit
             var raw = key.GetValue(setting.Name);
             if (raw != null && key.GetValueKind(setting.Name) != RegistryValueKind.DWord)
                 throw new InvalidOperationException("Tipo de registro no compatible; no se modificó el valor.");
-            var before = new Snapshot(raw != null, raw is int value ? value : 0);
+            var before = new Snapshot(1, id, raw != null, raw is int value ? value : 0);
             Snapshot target;
             if (restore)
             {
-                target = await backups.GetLastStateAsync<Snapshot>(id)
+                target = await backups.GetLastStateAsync<Snapshot>(backupKey)
                     ?? throw new InvalidOperationException("No hay un respaldo original para esta operación.");
             }
             else
             {
                 // Preserve the FIRST original state across repeated applications.
-                if (!backups.HasBackup(id)) await backups.SaveStateAsync(id, before);
-                target = new Snapshot(true, setting.Value);
+                if (backups.HasBackup(backupKey))
+                {
+                    var original = await backups.GetLastStateAsync<Snapshot>(backupKey);
+                    if (original is null || original.Version != 1 || original.Operation != id)
+                        throw new IOException("Respaldo incompatible; no se modificó el registro.");
+                }
+                else await backups.SaveStateAsync(backupKey, before);
+                target = new Snapshot(1, id, true, setting.Value);
             }
+            if (target.Version != 1 || target.Operation != id) throw new IOException("Respaldo incompatible.");
             if (target.Exists) key.SetValue(setting.Name, target.Value, RegistryValueKind.DWord);
             else key.DeleteValue(setting.Name, false);
             key.Flush();
             var actual = key.GetValue(setting.Name);
             if (target.Exists ? actual is not int n || n != target.Value : actual != null)
                 throw new IOException("La lectura posterior no coincide con el cambio solicitado; respaldo conservado.");
-            if (restore) await backups.ClearBackupAsync(id);
+            if (restore) await backups.ClearBackupAsync(backupKey);
             logs.Add($"Registro verificado: {setting.Path}\\{setting.Name}. Algunos cambios requieren reiniciar Windows.");
             return new OperationResult(true, id, restore ? "restore" : "apply", DateTime.UtcNow,
                 timer.Elapsed.TotalMilliseconds, logs, before, target, null, restore);

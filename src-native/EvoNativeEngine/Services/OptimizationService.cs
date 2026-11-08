@@ -28,6 +28,8 @@ public class OptimizationService : IOptimizationService
     private readonly IBackupManager _backupManager;
     private readonly IDiagnosticsService _diagnosticsService;
 
+    private PowerOptimizationService PowerOperations => new(_backupManager, new WindowsPowerSettings());
+
     private RegistryOptimizationService RegistryOperations => new(_backupManager, _securityService);
 
     private readonly ConcurrentBag<OperationHistoryItem> _history = new();
@@ -50,7 +52,7 @@ public class OptimizationService : IOptimizationService
         // 3. Los 15 Modos Cortex
         ["cortex.mode.bestia"] = new("cortex.mode.bestia", "Modo Bestia Seguro", "Afinidad a P-Cores 0-3 (mask 15), Prioridad Alta y purga de aplicaciones secundarias.", "Cortex", false, true, true),
         ["cortex.mode.torneo"] = new("cortex.mode.torneo", "Modo Torneo (Optimización DWM / Shell)", "Ajusta transparencias y composición pesada de ventanas para liberar memoria gráfica.", "Cortex", false, true, true, true, "¿Deseas optimizar la composición visual de Windows para máxima fluidez en CS2?"),
-        ["cortex.mode.nucleo"] = new("cortex.mode.nucleo", "Instalación del Núcleo (Power & Timers)", "Activa perfil de Alto Rendimiento, asegura TRIM NVMe y optimiza BCD.", "Cortex", true, true, true),
+        ["cortex.mode.nucleo"] = new("cortex.mode.nucleo", "Plan de Alto Rendimiento", "Activa el plan de Alto Rendimiento existente y respalda el GUID original. No modifica BCD ni TRIM.", "Cortex", true, true, true),
         ["cortex.mode.timers"] = new("cortex.mode.timers", "Fix Timers TSC (Anti-HPET lento)", "Elimina temporizadores lentos y activa TSC nativo a 4GHz sin jitter.", "Cortex", true, true, true),
         ["cortex.mode.gpu"] = new("cortex.mode.gpu", "Boost Intel UHD + MPO Fix", "Configura OverlayTestMode=5 para evitar parpadeos y asegura HAGS activo.", "Cortex", false, true, true),
         ["cortex.mode.stutter"] = new("cortex.mode.stutter", "Fix Stutter RAM Definitivo", "Detiene SysMain redundante en SSD NVMe y purga memoria en espera.", "Cortex", true, true, true),
@@ -66,7 +68,7 @@ public class OptimizationService : IOptimizationService
 
         // 4. Tweaks Atómicos
         ["tweak.cpu.affinity_15"] = new("tweak.cpu.affinity_15", "Afinidad P-Cores 0-3 (Máscara 15)", "Fuerza a cs2.exe a correr en los 4 hilos rápidos de los P-Cores.", "CPU", false, true, true),
-        ["tweak.cpu.idledisable"] = new("tweak.cpu.idledisable", "Desactivar Reposo CPU (IDLEDISABLE)", "Mantiene los relojes de CPU estables al 100% durante la sesión de juego.", "CPU", true, true, true),
+        ["tweak.cpu.idledisable"] = new("tweak.cpu.idledisable", "Desactivar Reposo CPU (IDLEDISABLE)", "Desactiva reposo en el perfil AC del plan activo. Puede aumentar consumo y temperatura; no garantiza frecuencia fija.", "CPU", true, true, true),
         ["tweak.cpu.powerthrottling_off"] = new("tweak.cpu.powerthrottling_off", "Desactivar Power Throttling", "Evita que Windows limite la frecuencia bajo picos de carga.", "CPU", true, true, true),
         ["tweak.cpu.win32priority"] = new("tweak.cpu.win32priority", "Win32PrioritySeparation a 38", "Prioridad máxima inmediata para la ventana en primer plano de CS2.", "CPU", true, true, true),
         ["tweak.gpu.mpo_fix"] = new("tweak.gpu.mpo_fix", "Desactivar Multi-Plane Overlay (MPO)", "Corrige micro-tirones y parpadeos en gráficos Intel.", "GPU", true, true, true),
@@ -104,8 +106,12 @@ public class OptimizationService : IOptimizationService
 
     public Task<IReadOnlyList<OperationCatalogItem>> GetCatalogAsync()
     {
-        return Task.FromResult<IReadOnlyList<OperationCatalogItem>>(_catalog.Values.ToList());
+        return Task.FromResult<IReadOnlyList<OperationCatalogItem>>(_catalog.Values
+            .Select(item => item with { CanRestore = HasVerifiedRestore(item.Id) }).ToList());
     }
+
+    private bool HasVerifiedRestore(string id) => RegistryOperations.Supports(id) || PowerOperations.Supports(id)
+        || id is "gaming.cs2.priority" or "cortex.mode.bestia" or "tweak.cpu.affinity_15";
 
     public async Task<OperationResult> ApplyOperationAsync(string operationId)
     {
@@ -141,6 +147,7 @@ public class OptimizationService : IOptimizationService
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
             OperationResult result = RegistryOperations.Supports(operationId)
                 ? await RegistryOperations.ExecuteAsync(operationId, false)
+                : PowerOperations.Supports(operationId) ? await PowerOperations.ExecuteAsync(operationId, false)
                 : operationId switch
             {
                 // Diagnóstico y Telemetría
@@ -243,6 +250,7 @@ public class OptimizationService : IOptimizationService
                 throw new UnauthorizedAccessException("Esta operación requiere ejecutar el motor como administrador.");
             OperationResult result = RegistryOperations.Supports(operationId)
                 ? await RegistryOperations.ExecuteAsync(operationId, true)
+                : PowerOperations.Supports(operationId) ? await PowerOperations.ExecuteAsync(operationId, true)
                 : operationId switch
             {
                 "gaming.cs2.priority" or "gaming.cs2.priority.restore" or "cortex.mode.bestia" or "tweak.cpu.affinity_15" => 
@@ -292,8 +300,10 @@ public class OptimizationService : IOptimizationService
     public Task<OperationStatusResponse> GetOperationStatusAsync(string operationId)
     {
         bool isImplemented = _catalog.TryGetValue(operationId, out var item) && item.IsImplemented;
-        bool canRestore = item?.CanRestore ?? false;
-        bool hasBackup = _backupManager.HasBackup(operationId);
+        bool canRestore = isImplemented && HasVerifiedRestore(operationId);
+        bool hasBackup = _backupManager.HasBackup(
+            PowerOperations.Supports(operationId) || RegistryOperations.Supports(operationId)
+                ? $"verified.v1.{operationId}" : operationId);
 
         var lastRun = _history.Where(h => h.OperationId.Equals(operationId, StringComparison.OrdinalIgnoreCase))
                               .OrderByDescending(h => h.TimestampUtc)

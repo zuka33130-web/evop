@@ -37,3 +37,14 @@ Aplicar: `POST /api/operations/{id}/apply`. Revertir: `POST /api/operations/{id}
 Esto no reimplementa ni certifica todos los presets heredados: varios ejecutores antiguos aún requieren snapshots reales y revisión del manejo de errores. No migrar automáticamente backups creados por ejecutores antiguos; usar un entorno de prueba limpio. Los seis IDs anteriores constituyen el nuevo camino verificable. La API sigue siendo local sin autenticación; el IPC Tauri arbitrario sigue pendiente de endurecimiento.
 
 Validación local: `npm run lint` pasa. No hay SDK .NET ni Windows en el entorno de desarrollo utilizado; el workflow Native Windows build compila/publica en Windows, pero no sustituye las pruebas de aplicación/restauración en una VM con snapshot externo. No se ejecutaron cambios en el sistema del usuario.
+
+## Segunda etapa: energía mediante Win32
+
+- `cortex.mode.nucleo` ahora solo selecciona el plan Alto Rendimiento existente con `PowerSetActiveScheme`; lee y respalda el GUID original mediante `PowerGetActiveScheme`. Si el plan no existe/no está disponible, falla sin inventarlo. Restaurar vuelve al GUID real original.
+- `tweak.cpu.idledisable` usa `PowerReadACValueIndex` y `PowerWriteACValueIndex` sobre el GUID de plan respaldado. No cambia el valor DC/batería. Si cambia el plan activo entre aplicaciones, exige restaurar antes de aplicar a otro. Restaurar un plan inactivo no lo activa.
+- Estos ajustes pueden aumentar temperatura/consumo. No garantizan FPS ni frecuencia fija.
+- Los nuevos snapshots de energía y registro usan claves `verified.v1.*` y validación de versión/operación; no interpretan snapshots heredados como originales verificados. Los snapshots históricos se conservan aparte.
+- La escritura de backups usa archivo temporal y reemplazo en el mismo directorio para evitar JSON parcialmente escrito.
+- Catálogo/estado solo anuncian restauración para los caminos de registro, energía y prioridad CS2 con restauración dedicada. Esto no certifica los ejecutores antiguos de aplicación.
+
+El workflow ejecuta también `src-native/EvoNativeEngine.Tests`, un arnés sin paquetes de test que utiliza un adaptador de energía falso. Cubre aplicar/reaplicar/restaurar, respaldo ausente, cambio de plan, fallo de lectura posterior y conservación del backup, reintento y error de API. Estas pruebas no tocan registro ni energía del runner. La integración real sigue requiriendo Windows de prueba.
