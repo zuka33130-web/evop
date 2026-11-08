@@ -30,13 +30,23 @@ import { FilesExporter } from './components/FilesExporter';
 import { ExtremeGodMode } from './components/ExtremeGodMode';
 import { ScientificLab } from './components/ScientificLab';
 import { NativeDiagnosticsCard } from './components/NativeDiagnosticsCard';
+import { OptimizationTemplates } from './components/OptimizationTemplates';
+import { Sidebar } from './components/Sidebar';
+import { PresentMonLab } from './components/PresentMonLab';
+import { KnowledgeBase } from './components/KnowledgeBase';
+import { EvoCleaner } from './components/EvoCleaner';
 import { useNativeBridge, SystemHardwareReport } from './services/nativeBridge';
-import { Server } from 'lucide-react';
+import { Server, Play, PlayCircle, Sliders, CheckCircle2 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [optimizationSubTab, setOptimizationSubTab] = useState<'presets' | 'tweaks'>('presets');
+  const [labSubTab, setLabSubTab] = useState<'calculator' | 'godmode' | 'scientific'>('calculator');
+  const [toolsSubTab, setToolsSubTab] = useState<'cortex' | 'autoexec' | 'bios' | 'files' | 'diagnostics'>('cortex');
   const [hardware, setHardware] = useState<HardwareProfile>(defaultHardwareProfile);
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [cs2LaunchStatus, setCs2LaunchStatus] = useState<string | null>(null);
+  const [isLaunchingCs2, setIsLaunchingCs2] = useState(false);
 
   const {
     connectionStatus,
@@ -52,8 +62,30 @@ export default function App() {
     activeOperation,
     applyOp,
     restoreOp,
-    fetchTelemetry
+    fetchTelemetry,
+    runClean
   } = useNativeBridge();
+
+  const handleLaunchCs2Optimized = async () => {
+    if (!isConnected) {
+      alert('Para lanzar CS2 con optimizaciones de Windows, inicia EvoNativeEngine (http://127.0.0.1:48120).');
+      return;
+    }
+
+    setIsLaunchingCs2(true);
+    setCs2LaunchStatus('Aplicando afinidad P-Cores y prioridad Alta...');
+
+    try {
+      await applyOp('cortex.mode.bestia');
+      setCs2LaunchStatus('Solicitando inicio de CS2 a Steam...');
+      const res = await applyOp('gaming.cs2.launch');
+      setCs2LaunchStatus(res.success ? '✓ CS2 lanzado con éxito y afinidad verificada.' : (res.errorMessage || 'CS2 en ejecución'));
+    } catch (err: any) {
+      setCs2LaunchStatus(`Aviso: ${err.message}`);
+    } finally {
+      setIsLaunchingCs2(false);
+    }
+  };
 
   const handleApplyRealHardware = (diag: SystemHardwareReport) => {
     setHardware(prev => ({
@@ -78,18 +110,19 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-emerald-500/20 selection:text-emerald-300">
-      {/* Top Navigation Header */}
-      <Navbar
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col lg:flex-row selection:bg-emerald-500/20 selection:text-emerald-300">
+      {/* Sidebar de Navegación del Sistema (Menú de la Izquierda) */}
+      <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        isNativeConnected={isConnected}
         onDownloadZip={handleDownloadZip}
         isDownloading={isDownloadingZip}
-        isNativeConnected={isConnected}
       />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Main Content Area */}
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {/* Hardware target banner */}
         <HardwareProfileHeader 
           hardware={hardware} 
@@ -99,8 +132,8 @@ export default function App() {
           onOpenDiagnostics={() => setActiveTab('diagnostics')}
         />
 
-        {/* Tab 1: Overview Dashboard */}
-        {activeTab === 'overview' && (
+        {/* Tab 1: Overview / Dashboard */}
+        {(activeTab === 'dashboard' || activeTab === 'overview') && (
           <div className="space-y-8">
             {/* Hero Card */}
             <div className="relative rounded-2xl bg-gradient-to-b from-neutral-900 to-neutral-950 border border-neutral-800 p-6 sm:p-8 overflow-hidden">
@@ -125,20 +158,21 @@ export default function App() {
 
                 <div className="flex flex-wrap items-center gap-3 mt-6">
                   <button
-                    onClick={() => setActiveTab('runner')}
-                    className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-semibold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg shadow-sm transition-all active:scale-95"
+                    onClick={() => setActiveTab('presets')}
+                    className="flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg shadow-sm shadow-emerald-500/20 transition-all active:scale-95"
                   >
-                    <Terminal className="w-4 h-4" />
-                    <span>Consola 1-Click Cortex (15 Modos)</span>
+                    <Zap className="w-4 h-4 fill-current" />
+                    <span>Plantillas 1-Click (Activar / Revertir)</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
 
                   <button
-                    onClick={() => setActiveTab('godmode')}
-                    className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold text-rose-300 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 rounded-lg transition-colors"
+                    disabled={!isConnected || isLaunchingCs2}
+                    onClick={handleLaunchCs2Optimized}
+                    className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors shadow-sm"
                   >
-                    <Flame className="w-4 h-4 text-rose-400" />
-                    <span>Fase 3: Modo Ultra Agresivo & God Mode</span>
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>{isLaunchingCs2 ? 'Iniciando CS2...' : 'Lanzar CS2 con Optimización'}</span>
                   </button>
 
                   <button
@@ -146,37 +180,32 @@ export default function App() {
                     className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-medium text-neutral-300 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-lg transition-colors"
                   >
                     <Layers className="w-4 h-4 text-emerald-400" />
-                    <span>Explorar los 110 Tweaks</span>
-                  </button>
-
-                  <button
-                    onClick={() => setActiveTab('fps_calculator')}
-                    className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-medium text-neutral-300 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-lg transition-colors"
-                  >
-                    <Gauge className="w-4 h-4 text-cyan-400" />
-                    <span>Simular FPS Reales</span>
+                    <span>Centro de Tweaks (72+)</span>
                   </button>
 
                   <button
                     onClick={() => setActiveTab('lab')}
-                    className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/40 rounded-lg transition-colors"
+                    className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-medium text-neutral-300 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-lg transition-colors"
                   >
-                    <FlaskConical className="w-4 h-4 text-emerald-400" />
-                    <span>Laboratorio Científico A/B & EVO</span>
+                    <FlaskConical className="w-4 h-4 text-cyan-400" />
+                    <span>Laboratorio & Rendimiento</span>
                   </button>
 
                   <button
-                    onClick={() => setActiveTab('diagnostics')}
-                    className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-lg border transition-colors ${
-                      isConnected 
-                        ? 'text-neutral-950 bg-emerald-400 hover:bg-emerald-300 border-emerald-400 font-bold' 
-                        : 'text-neutral-300 bg-neutral-900 hover:bg-neutral-800 border-neutral-700/80'
-                    }`}
+                    onClick={() => setActiveTab('runner')}
+                    className="flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-medium text-neutral-300 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700/80 rounded-lg transition-colors"
                   >
-                    <Server className="w-4 h-4 text-emerald-400" />
-                    <span>Diagnóstico Real C# {isConnected ? '(Conectado)' : '(Windows 11)'}</span>
+                    <Terminal className="w-4 h-4 text-amber-400" />
+                    <span>Consola Cortex (15 Modos)</span>
                   </button>
                 </div>
+
+                {cs2LaunchStatus && (
+                  <div className="mt-4 p-3 rounded-lg bg-neutral-900/90 border border-emerald-500/40 text-xs font-mono text-emerald-300 flex items-center justify-between">
+                    <span>{cs2LaunchStatus}</span>
+                    <button onClick={() => setCs2LaunchStatus(null)} className="text-neutral-500 hover:text-white">✕</button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -321,78 +350,253 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab: Diagnóstico Real C# (Windows 11 Native Engine) */}
-        {activeTab === 'diagnostics' && (
-          <NativeDiagnosticsCard
-            status={connectionStatus}
-            engineInfo={engineInfo}
-            diagnostics={diagnostics}
-            error={nativeError}
-            isScanning={isScanning}
-            onReconnect={reconnect}
-            onRefresh={refreshScan}
-            onApplyRealHardware={handleApplyRealHardware}
-            catalog={catalog}
-            history={history}
-          />
+        {/* Tab 2: Centro de Optimización (Fusión de Plantillas y Tweaks) */}
+        {(activeTab === 'optimization' || activeTab === 'presets' || activeTab === 'tweaks') && (
+          <div className="space-y-6">
+            <div className="bg-neutral-900/80 border border-neutral-800 rounded-xl p-1.5 flex flex-wrap gap-1.5 items-center justify-between">
+              <div className="flex flex-wrap gap-1">
+                <button
+                  onClick={() => setOptimizationSubTab('presets')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    optimizationSubTab === 'presets'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>Plantillas 1-Click (Presets)</span>
+                </button>
+
+                <button
+                  onClick={() => setOptimizationSubTab('tweaks')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    optimizationSubTab === 'tweaks'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Centro de Tweaks (110 Módulos Discretos)</span>
+                </button>
+              </div>
+            </div>
+
+            {optimizationSubTab === 'presets' ? (
+              <OptimizationTemplates
+                isNativeConnected={isConnected}
+                activeOperation={activeOperation}
+                onApplyOp={applyOp}
+                onRestoreOp={restoreOp}
+              />
+            ) : (
+              <ModulesExplorer 
+                isNativeConnected={isConnected}
+                activeOperation={activeOperation}
+                onApplyOp={applyOp}
+                onRestoreOp={restoreOp}
+              />
+            )}
+          </div>
         )}
 
-        {/* Tab: Fase 2 & 3 God Mode */}
-        {activeTab === 'godmode' && (
-          <ExtremeGodMode 
-            hardware={hardware}
-            isNativeConnected={isConnected}
-            activeOperation={activeOperation}
-            onApplyOp={applyOp}
-            onRestoreOp={restoreOp}
-            fetchTelemetry={fetchTelemetry}
-          />
+        {/* Tab 3: Motor de Limpieza Profunda "EvoClean" */}
+        {activeTab === 'cleaner' && (
+          <EvoCleaner isNativeConnected={isConnected} onRunClean={runClean} />
         )}
 
-        {/* Tab 2: 15 Modos Cortex */}
-        {activeTab === 'runner' && (
-          <QuickRunTerminal 
-            hardware={hardware} 
-            isNativeConnected={isConnected}
-            activeOperation={activeOperation}
-            onApplyOp={applyOp}
-            onRestoreOp={restoreOp}
-          />
+        {/* Tab 4: Laboratorio PresentMon (Telemetría Empírica & Sub-tabs de Rendimiento) */}
+        {activeTab === 'presentmon' && (
+          <PresentMonLab isNativeConnected={isConnected} />
         )}
 
-        {/* Tab 3: 110 Tweaks Explorer */}
-        {activeTab === 'tweaks' && (
-          <ModulesExplorer 
-            isNativeConnected={isConnected}
-            activeOperation={activeOperation}
-            onApplyOp={applyOp}
-            onRestoreOp={restoreOp}
-          />
+        {/* Tab 6: Base de Conocimiento (Mitos Desmentidos) */}
+        {activeTab === 'knowledge' && (
+          <KnowledgeBase />
         )}
 
-        {/* Tab 4: FPS Calculator */}
-        {activeTab === 'fps_calculator' && (
-          <FpsCalculator />
+        {/* Tab 4: Laboratorio & Rendimiento (Sub-tabs: Calculador, God Mode, Científico) */}
+        {(activeTab === 'lab' || activeTab === 'fps_calculator' || activeTab === 'godmode') && (
+          <div className="space-y-6">
+            {/* Sub-navigation bar for Lab */}
+            <div className="bg-neutral-900/80 border border-neutral-800 rounded-xl p-1.5 flex flex-wrap gap-1.5 items-center justify-between">
+              <div className="flex flex-wrap gap-1">
+                <button
+                  onClick={() => setLabSubTab('calculator')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    (activeTab === 'fps_calculator' || (activeTab === 'lab' && labSubTab === 'calculator'))
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <Gauge className="w-3.5 h-3.5" />
+                  <span>Calculador de FPS & Palancas Reales</span>
+                </button>
+
+                <button
+                  onClick={() => setLabSubTab('godmode')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    (activeTab === 'godmode' || (activeTab === 'lab' && labSubTab === 'godmode'))
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <Flame className="w-3.5 h-3.5" />
+                  <span>Fase 3 God Mode & Sensores en Vivo</span>
+                </button>
+
+                <button
+                  onClick={() => setLabSubTab('scientific')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    activeTab === 'lab' && labSubTab === 'scientific'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <FlaskConical className="w-3.5 h-3.5" />
+                  <span>Laboratorio Científico A/B & EVO Score</span>
+                </button>
+              </div>
+
+              <div className="hidden sm:flex items-center gap-2 px-3 text-[11px] text-neutral-500 font-mono">
+                <span>PN64 i3-1220P · UHD 64EU</span>
+              </div>
+            </div>
+
+            {/* Sub-view rendering */}
+            {(activeTab === 'fps_calculator' || (activeTab === 'lab' && labSubTab === 'calculator')) && (
+              <FpsCalculator 
+                isNativeConnected={isConnected}
+                onApplyOp={applyOp}
+              />
+            )}
+
+            {(activeTab === 'godmode' || (activeTab === 'lab' && labSubTab === 'godmode')) && (
+              <ExtremeGodMode 
+                hardware={hardware}
+                isNativeConnected={isConnected}
+                activeOperation={activeOperation}
+                onApplyOp={applyOp}
+                onRestoreOp={restoreOp}
+                fetchTelemetry={fetchTelemetry}
+              />
+            )}
+
+            {activeTab === 'lab' && labSubTab === 'scientific' && (
+              <ScientificLab 
+                hardware={hardware} 
+                isNativeConnected={isConnected}
+                diagnostics={diagnostics}
+              />
+            )}
+          </div>
         )}
 
-        {/* Tab: Laboratorio A/B & EVO */}
-        {activeTab === 'lab' && (
-          <ScientificLab hardware={hardware} />
-        )}
+        {/* Tab 5: Configuración & Herramientas (Sub-tabs: 15 Modos Cortex, Diagnóstico, Autoexec, BIOS, Archivos) */}
+        {(activeTab === 'tools' || activeTab === 'runner' || activeTab === 'diagnostics' || activeTab === 'autoexec' || activeTab === 'bios' || activeTab === 'files') && (
+          <div className="space-y-6">
+            {/* Sub-navigation bar for Tools */}
+            <div className="bg-neutral-900/80 border border-neutral-800 rounded-xl p-1.5 flex flex-wrap gap-1.5 items-center justify-between">
+              <div className="flex flex-wrap gap-1">
+                <button
+                  onClick={() => setToolsSubTab('cortex')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    (activeTab === 'runner' || (activeTab === 'tools' && toolsSubTab === 'cortex'))
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span>15 Modos Cortex</span>
+                </button>
 
-        {/* Tab 5: CS2 Autoexec Builder & Video.txt */}
-        {activeTab === 'autoexec' && (
-          <AutoexecBuilder />
-        )}
+                <button
+                  onClick={() => setToolsSubTab('diagnostics')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    (activeTab === 'diagnostics' || (activeTab === 'tools' && toolsSubTab === 'diagnostics'))
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  <span>Diagnóstico WMI C#</span>
+                </button>
 
-        {/* Tab 6: BIOS Guide */}
-        {activeTab === 'bios' && (
-          <BiosChecklist />
-        )}
+                <button
+                  onClick={() => setToolsSubTab('autoexec')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    (activeTab === 'autoexec' || (activeTab === 'tools' && toolsSubTab === 'autoexec'))
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                  <span>CS2 Autoexec & Video.txt</span>
+                </button>
 
-        {/* Tab 7: Files Exporter */}
-        {activeTab === 'files' && (
-          <FilesExporter hardware={hardware} />
+                <button
+                  onClick={() => setToolsSubTab('bios')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    (activeTab === 'bios' || (activeTab === 'tools' && toolsSubTab === 'bios'))
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Guía BIOS ASUS PN64</span>
+                </button>
+
+                <button
+                  onClick={() => setToolsSubTab('files')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                    (activeTab === 'files' || (activeTab === 'tools' && toolsSubTab === 'files'))
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60'
+                  }`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Scripts .BAT & Respaldo</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Sub-view rendering */}
+            {(activeTab === 'runner' || (activeTab === 'tools' && toolsSubTab === 'cortex')) && (
+              <QuickRunTerminal 
+                hardware={hardware} 
+                isNativeConnected={isConnected}
+                activeOperation={activeOperation}
+                onApplyOp={applyOp}
+                onRestoreOp={restoreOp}
+              />
+            )}
+
+            {(activeTab === 'diagnostics' || (activeTab === 'tools' && toolsSubTab === 'diagnostics')) && (
+              <NativeDiagnosticsCard
+                status={connectionStatus}
+                engineInfo={engineInfo}
+                diagnostics={diagnostics}
+                error={nativeError}
+                isScanning={isScanning}
+                onReconnect={reconnect}
+                onRefresh={refreshScan}
+                onApplyRealHardware={handleApplyRealHardware}
+                catalog={catalog}
+                history={history}
+              />
+            )}
+
+            {(activeTab === 'autoexec' || (activeTab === 'tools' && toolsSubTab === 'autoexec')) && (
+              <AutoexecBuilder />
+            )}
+
+            {(activeTab === 'bios' || (activeTab === 'tools' && toolsSubTab === 'bios')) && (
+              <BiosChecklist />
+            )}
+
+            {(activeTab === 'files' || (activeTab === 'tools' && toolsSubTab === 'files')) && (
+              <FilesExporter hardware={hardware} />
+            )}
+          </div>
         )}
       </main>
 
@@ -415,5 +619,6 @@ export default function App() {
         </div>
       </footer>
     </div>
-  );
+  </div>
+);
 }

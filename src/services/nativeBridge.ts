@@ -343,6 +343,28 @@ export async function fetchRealtimeTelemetry(baseUrl = DEFAULT_NATIVE_ENGINE_URL
   }
 }
 
+export interface EvoCleanResponse {
+  status: string;
+  mode: string;
+  freedMB: number;
+  scannedMB: number;
+  details: string;
+  executedAtUtc?: string;
+  durationMs?: number;
+}
+
+export async function runEvoClean(mode: 'Scan' | 'Clean' = 'Scan', baseUrl: string = DEFAULT_NATIVE_ENGINE_URL): Promise<EvoCleanResponse> {
+  const endpoint = mode === 'Clean' ? `${baseUrl}/api/clean/execute` : `${baseUrl}/api/clean/scan`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
+  }
+  return await response.json();
+}
+
 /**
  * Hook de React para gestionar la conexión, diagnósticos y operaciones del motor C# en tiempo real
  */
@@ -485,6 +507,7 @@ export function useNativeBridge(baseUrl = DEFAULT_NATIVE_ENGINE_URL) {
     restoreOp,
     getOpStatus,
     fetchTelemetry: () => fetchRealtimeTelemetry(baseUrl),
+    runClean: (mode: 'Scan' | 'Clean' = 'Scan') => runEvoClean(mode, baseUrl),
     isConnected: connectionStatus === 'connected',
   };
 }

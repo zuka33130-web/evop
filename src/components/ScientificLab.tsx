@@ -52,12 +52,21 @@ import {
   WINDOWS_13_MECHANISMS_AUDIT,
   exportAuditReportJson
 } from '../utils/evoMasterEngine';
+import { RealtimeTelemetryData, SystemHardwareReport } from '../services/nativeBridge';
 
 interface ScientificLabProps {
   hardware: HardwareProfile;
+  isNativeConnected?: boolean;
+  realTelemetry?: RealtimeTelemetryData | null;
+  diagnostics?: SystemHardwareReport | null;
 }
 
-export const ScientificLab: React.FC<ScientificLabProps> = ({ hardware }) => {
+export const ScientificLab: React.FC<ScientificLabProps> = ({ 
+  hardware,
+  isNativeConnected = false,
+  realTelemetry = null,
+  diagnostics = null
+}) => {
   const [activeSubTab, setActiveSubTab] = useState<
     'evo_score' | 'silicon_topology' | 'welch_ab' | 'frametimes' | 'audit_13_internals' | 'memory_intel'
   >('evo_score');
@@ -379,6 +388,23 @@ export const ScientificLab: React.FC<ScientificLabProps> = ({ hardware }) => {
     }
   }, [simAvailableRamGb, simCommitChargePercent, simHardFaultsSec, memoryThresholdGb]);
 
+  // Import real telemetry from C# engine
+  const handleImportRealTelemetry = () => {
+    if (!realTelemetry) {
+      alert('No se detectaron lecturas del motor C#. Asegúrate de que esté corriendo en http://127.0.0.1:48120.');
+      return;
+    }
+    setTelemetry(prev => ({
+      ...prev,
+      cpuUsagePercent: Math.round(realTelemetry.cpuUsagePct),
+      ramUsedGb: Math.round(((realTelemetry.ramTotalMb - realTelemetry.ramFreeMb) / 1024) * 10) / 10,
+      ramTotalGb: Math.round((realTelemetry.ramTotalMb / 1024) * 10) / 10,
+      currentMhz: realTelemetry.cpuClockMhz > 0 ? realTelemetry.cpuClockMhz : prev.currentMhz,
+      thermalSensorCalibrated: true,
+      ssdFreePercent: diagnostics?.storageDrives[0]?.freePercentage ?? prev.ssdFreePercent
+    }));
+  };
+
   // Export JSON audit handler
   const handleExportAuditJson = () => {
     exportAuditReportJson(telemetry, activeObjective, evoScore, welchReport);
@@ -405,7 +431,18 @@ export const ScientificLab: React.FC<ScientificLabProps> = ({ hardware }) => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 self-start lg:self-auto shrink-0">
+          <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-auto shrink-0">
+            {isNativeConnected && (
+              <button
+                onClick={handleImportRealTelemetry}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold text-xs transition-all shadow-sm cursor-pointer"
+                title="Cargar telemetría en vivo del procesador, RAM y discos"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                <span>Importar Sensores Reales</span>
+              </button>
+            )}
+
             <button
               onClick={handleExportAuditJson}
               className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-all shadow-sm cursor-pointer"

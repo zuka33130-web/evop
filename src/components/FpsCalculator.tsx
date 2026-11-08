@@ -1,9 +1,20 @@
 import React, { useState } from 'react';
-import { Gauge, Check, BarChart2, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Gauge, Check, BarChart2, ShieldCheck, AlertTriangle, Play, Zap, CheckCircle2 } from 'lucide-react';
 import { realisticFpsBenchmarks } from '../data/optimizerData';
+import { OperationResult } from '../services/nativeBridge';
 
-export const FpsCalculator: React.FC = () => {
+interface FpsCalculatorProps {
+  isNativeConnected?: boolean;
+  onApplyOp?: (opId: string) => Promise<OperationResult>;
+}
+
+export const FpsCalculator: React.FC<FpsCalculatorProps> = ({
+  isNativeConnected = false,
+  onApplyOp
+}) => {
   const [selectedBenchmark, setSelectedBenchmark] = useState<keyof typeof realisticFpsBenchmarks>('fase3GodMode');
+  const [isApplyingReal, setIsApplyingReal] = useState(false);
+  const [applyFeedback, setApplyFeedback] = useState<string | null>(null);
   
   // Toggles for active optimizations to simulate progressive gains
   const [toggles, setToggles] = useState({
@@ -18,6 +29,33 @@ export const FpsCalculator: React.FC = () => {
 
   const toggleItem = (key: keyof typeof toggles) => {
     setToggles(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleApplyCalculatedConfig = async () => {
+    if (!onApplyOp || !isNativeConnected) {
+      alert('Para aplicar estos cambios reales en Windows 11, conecta el motor local en http://127.0.0.1:48120.');
+      return;
+    }
+
+    setIsApplyingReal(true);
+    setApplyFeedback('Aplicando optimizaciones seleccionadas en el sistema...');
+
+    const opList: string[] = [];
+    if (toggles.pCoresAffinity) opList.push('cortex.mode.bestia');
+    if (toggles.torneoExplorer) opList.push('cortex.mode.torneo');
+    if (toggles.mpoFixUhd) opList.push('tweak.gpu.mpo_fix');
+    if (toggles.tscTimer) opList.push('cortex.mode.timers');
+
+    try {
+      for (const opId of opList) {
+        await onApplyOp(opId);
+      }
+      setApplyFeedback(`✓ ${opList.length} ajustes aplicados y verificados con éxito en Windows.`);
+    } catch (err: any) {
+      setApplyFeedback(`Error al aplicar: ${err.message}`);
+    } finally {
+      setIsApplyingReal(false);
+    }
   };
 
   // Base stock: 1280x960 without tweaks
@@ -76,13 +114,29 @@ export const FpsCalculator: React.FC = () => {
         <div>
           <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
             <Gauge className="w-5 h-5 text-emerald-400" />
-            <span>Simulador de FPS & Latencia Real (PresentMon / CapFrameX)</span>
+            <span>Calculador de FPS & Latencia (PresentMon / CapFrameX)</span>
           </h3>
           <p className="text-xs sm:text-sm text-neutral-400 mt-0.5">
-            Métricas reales y científicas para el ASUS PN64 (i3-1220P 2P+8E con Intel UHD 64EU y 16GB Dual Channel).
+            Métricas de rendimiento para el ASUS PN64 (i3-1220P 2P+8E con Intel UHD 64EU y 16GB Dual Channel).
           </p>
         </div>
+
+        <button
+          disabled={!isNativeConnected || isApplyingReal}
+          onClick={handleApplyCalculatedConfig}
+          className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-950 rounded-lg transition-all shadow-sm shadow-emerald-500/20"
+        >
+          <Play className="w-3.5 h-3.5 fill-current" />
+          <span>{isApplyingReal ? 'Aplicando en Windows...' : 'Aplicar Esta Configuración en Windows'}</span>
+        </button>
       </div>
+
+      {applyFeedback && (
+        <div className="p-3 bg-neutral-900 border border-emerald-500/40 rounded-xl text-xs font-mono text-emerald-300 flex items-center justify-between">
+          <span>{applyFeedback}</span>
+          <button onClick={() => setApplyFeedback(null)} className="text-neutral-400 hover:text-white">✕</button>
+        </div>
+      )}
 
       {/* Realistic benchmark comparison cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">

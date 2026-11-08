@@ -32,6 +32,7 @@ builder.Services.AddSingleton<ISecurityService, SecurityService>();
 builder.Services.AddSingleton<IBackupManager, BackupManager>();
 builder.Services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
 builder.Services.AddSingleton<IOptimizationService, OptimizationService>();
+builder.Services.AddSingleton<IEvoCleanService, EvoCleanService>();
 
 // CORS: Permitir exclusivamente solicitudes de clientes locales (Vite dev server, Tauri, etc.)
 builder.Services.AddCors(options =>
@@ -178,6 +179,31 @@ app.MapGet("/api/telemetry/realtime", async (IOptimizationService ops) =>
 {
     var telemetry = await ops.GetRealtimeTelemetryAsync();
     return Results.Ok(telemetry);
+});
+
+// Endpoints de Limpieza Profunda (EvoClean)
+app.MapGet("/api/clean/scan", async (IEvoCleanService cleanService) =>
+{
+    var result = await cleanService.RunCleanAsync("Scan");
+    return Results.Ok(result);
+});
+
+app.MapPost("/api/clean/scan", async (IEvoCleanService cleanService) =>
+{
+    var result = await cleanService.RunCleanAsync("Scan");
+    return Results.Ok(result);
+});
+
+app.MapPost("/api/clean/execute", async (IEvoCleanService cleanService) =>
+{
+    var result = await cleanService.RunCleanAsync("Clean");
+    return Results.Ok(result);
+});
+
+app.MapPost("/api/clean/apply", async (IEvoCleanService cleanService) =>
+{
+    var result = await cleanService.RunCleanAsync("Clean");
+    return Results.Ok(result);
 });
 
 // Endpoint raíz informativo
