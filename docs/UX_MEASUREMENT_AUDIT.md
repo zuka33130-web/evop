@@ -12,6 +12,7 @@
 | No había curva temporal de la medición | Grupos de intervalos reales: promedio ponderado por tiempo, sin interpolar ni fabricar FPS. Máximo aproximado de 240 grupos para CSV largos. |
 | Herramienta/proceso no disponibles se descubrían tarde | Preparación visible: Windows, PresentMon configurado e instancias detectadas. La comprobación no promete permisos ETW hasta capturar. |
 | Filtro solo por nombre de proceso podía capturar otra instancia reiniciada | PresentMon se inicia con el PID identificado. El resultado incluye el PID y la duración solicitada. |
+| Catálogo mezclaba alias, lecturas y presets | Tres vistas: cambios individuales, consultas y presets avanzados. Alias redundantes consolidados en su acción canónica, con la misma capacidad del motor. |
 | Descripciones breves insuficientes | Cada acción ofrece alcance, cuándo considerarla, riesgos, verificación y reversión. Guías específicas para los módulos atómicos y sus alias; presets explican límites de aplicación parcial. |
 | Cambios durante una captura podían confundir resultados | Acciones de la app bloqueadas durante solicitudes del laboratorio; aviso de medición al navegar. No se puede bloquear software externo: la comparación sigue siendo descriptiva. |
 | Metadatos HTML conservaban marca/equipo/promesas antiguas | Título y descripción actualizados a EVO y mediciones reales. |

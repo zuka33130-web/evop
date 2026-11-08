@@ -13,6 +13,7 @@ export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog
   const [error, setError] = useState('');
   const lock = useRef(false);
   const [category, setCategory] = useState('all');
+  const [kind, setKind] = useState('changes');
   const [query, setQuery] = useState('');
   const [states, setStates] = useState<Record<string, OperationStatusResponse>>({});
   const [refresh, setRefresh] = useState(0);
@@ -29,7 +30,7 @@ export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog
     return () => { disposed = true; };
   }, [connected, catalog, refresh]);
   async function execute(item: OperationCatalogItem, revert: boolean) {
-    if (!window.confirm(`${revert ? 'Restaurar' : 'Aplicar'}: ${item.name}\n${item.description}\n${item.confirmationMessage || ''}\nEsto puede modificar Windows. No garantiza más FPS.`)) return;
+    if (!item.isReadOnly && !window.confirm(`${revert ? 'Restaurar' : 'Aplicar'}: ${item.name}\n${item.description}\n${item.confirmationMessage || ''}\nEsto puede modificar Windows. No garantiza más FPS.`)) return;
     if (lock.current) return;
     lock.current = true;
     setBusy(true); setError('');
@@ -51,13 +52,22 @@ export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog
     } catch (e) { setError(e instanceof Error ? e.message : 'Error de recuperación'); }
     finally { lock.current = false; setBusy(false); setRefresh(v => v + 1); }
   }
-  const available = catalog.filter(item => item.isImplemented && (category === 'all' || item.category === category) && `${item.name} ${item.category} ${item.description}`.toLowerCase().includes(query.toLowerCase()));
+  const aliases = new Set(['cortex.mode.bestia','cortex.mode.stutter','cortex.mode.services','cortex.mode.debloat','gaming.cs2.priority.restore','cortex.mode.watchdog','cortex.mode.bench']);
+  function operationKind(item: OperationCatalogItem) {
+    return item.isReadOnly || item.id === 'gaming.cs2.launch' ? 'read'
+      : item.id === 'cortex.mode.gpu' || item.category === 'Orquestador' ? 'presets' : 'changes';
+  }
+  const visibleCatalog = catalog.filter(item => item.isImplemented && !aliases.has(item.id) && operationKind(item) === kind);
+  const available = visibleCatalog.filter(item => (category === 'all' || item.category === category) && `${item.name} ${item.category} ${item.description}`.toLowerCase().includes(query.toLowerCase()));
+
   return <section className="space-y-5">
     <div className="page-heading"><div><span className="eyebrow">CHANGE WORKSPACE</span><h1>Operaciones nativas verificables</h1><p>Conoce el alcance antes de aplicar. Prueba un solo módulo y compara la misma escena en el laboratorio.</p></div><button className="secondary-button" onClick={onMeasure}>Medir antes / después <ArrowUpRight size={14} /></button></div>
     {!connected && <p className="text-amber-300">Motor desconectado. Inícialo localmente en Windows.</p>}
     {connected && !elevated && <p className="text-amber-300 text-sm">Usuario estándar: los cambios de sistema que exigen administrador están bloqueados. No se implementó elevación selectiva.</p>}
+    <div className="phase-toggle" style={{maxWidth:580}}>{[['changes','Cambios individuales'],['read','Consultas y accesos'],['presets','Presets avanzados']].map(([id,label]) => <button key={id} aria-pressed={kind === id} onClick={() => { setKind(id); setCategory('all'); }}>{label}</button>)}</div>
+    {kind === 'presets' && <div className="notice">Un preset combina varios módulos: no permite identificar cuál causó un efecto y puede quedar parcialmente aplicado. Empieza por cambios individuales y revisa cada respaldo.</div>}
     <div className="flex flex-wrap gap-3"><input aria-label="Buscar operaciones" placeholder="Buscar por nombre, categoría o descripción" value={query} onChange={e => setQuery(e.target.value)} className="flex-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2" />
-      <select aria-label="Categoría de operación" className="evo-input" style={{width:'auto'}} value={category} onChange={e => setCategory(e.target.value)}><option value="all">Todas las categorías</option>{[...new Set(catalog.filter(c => c.isImplemented).map(c => c.category))].map(c => <option key={c} value={c}>{c === 'Cortex' ? 'Módulos y accesos' : c}</option>)}</select>
+      <select aria-label="Categoría de operación" className="evo-input" style={{width:'auto'}} value={category} onChange={e => setCategory(e.target.value)}><option value="all">Todas las categorías</option>{[...new Set(visibleCatalog.map(c => c.category))].map(c => <option key={c} value={c}>{c === 'Cortex' ? 'Módulos y accesos' : c}</option>)}</select>
       <button disabled={!connected || busy || globalBusy || loading} className="secondary-button" onClick={() => setRefresh(v => v + 1)}>Actualizar respaldos</button></div>
     <details className="instrument-card space-y-3"><summary className="text-xs font-semibold">Recuperación y respaldos</summary><h2 className="font-bold">Recuperación</h2>
       <p className="text-xs text-neutral-400">Solo se usan respaldos verificados. La restauración puede ser parcial si faltan permisos o el juego cerró; se muestran los pasos fallidos.</p>
