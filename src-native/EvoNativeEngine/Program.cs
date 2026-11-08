@@ -40,6 +40,7 @@ builder.Services.AddSingleton<IBackupManager, BackupManager>();
 builder.Services.AddSingleton<IDiagnosticsService, DiagnosticsService>();
 builder.Services.AddSingleton<IOptimizationService, OptimizationService>();
 builder.Services.AddSingleton<IEvoCleanService, EvoCleanService>();
+builder.Services.AddSingleton<BenchmarkSessionService>();
 
 // CORS: Permitir exclusivamente solicitudes de clientes locales (Vite dev server, Tauri, etc.)
 builder.Services.AddCors(options =>
@@ -211,6 +212,24 @@ app.MapPost("/api/clean/apply", async (IEvoCleanService cleanService) =>
 {
     var result = await cleanService.RunCleanAsync("Clean");
     return Results.Ok(result);
+});
+
+// Measured frame intervals only. Session IDs are server-owned and expire on restart.
+app.MapPost("/api/benchmarks/import", (BenchmarkInput input, BenchmarkSessionService sessions) =>
+{
+    try { return Results.Ok(sessions.Import(input)); }
+    catch (Exception ex) when (ex is ArgumentException or Microsoft.VisualBasic.FileIO.MalformedLineException)
+    { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/benchmarks/compare", (Guid[] ids, BenchmarkSessionService sessions) =>
+{
+    try { return Results.Ok(sessions.Compare(ids)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/benchmarks/capture", async (CaptureRequest request, BenchmarkSessionService sessions, HttpContext context) =>
+{
+    try { return Results.Ok(await sessions.CaptureAsync(request, context.RequestAborted)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 
 // Endpoint raíz informativo

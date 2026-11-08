@@ -111,7 +111,7 @@ public class OptimizationService : IOptimizationService
     // Do not expose legacy executors with guessed snapshots or misleading scope.
     private static readonly HashSet<string> PendingReview = new(StringComparer.OrdinalIgnoreCase)
     {
-        "cortex.mode.timers", "cortex.mode.network", "cortex.mode.vbs",
+        "cortex.mode.timers", "cortex.mode.network", "cortex.mode.vbs", "cortex.mode.cfg", "cortex.mode.god_mode",
         "tweak.network.nagle_off", "tweak.network.autotuning_high", "tweak.memory.pagefile_fixed",
         "tweak.disk.trim_nvme", "tweak.disk.disablelastaccess", "tweak.security.defender_exclusions",
         "tweak.services.update_pause", "cortex.mode.restore", "cortex.mode.extreme_undo"

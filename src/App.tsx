@@ -31,7 +31,8 @@ import { ScientificLab } from './components/ScientificLab';
 import { NativeDiagnosticsCard } from './components/NativeDiagnosticsCard';
 import { OptimizationTemplates } from './components/OptimizationTemplates';
 import { Sidebar } from './components/Sidebar';
-import { PresentMonLab } from './components/PresentMonLab';
+import { FrameStabilityLab } from './components/FrameStabilityLab';
+import { NativeOperationsPanel } from './components/NativeOperationsPanel';
 import { KnowledgeBase } from './components/KnowledgeBase';
 import { EvoCleaner } from './components/EvoCleaner';
 import { useNativeBridge, SystemHardwareReport } from './services/nativeBridge';
@@ -137,6 +138,9 @@ export default function App() {
           realDiagnostics={diagnostics}
           onOpenDiagnostics={() => setActiveTab('diagnostics')}
         />
+
+        {activeTab === 'stability' && <FrameStabilityLab connected={isConnected} />}
+        {activeTab === 'native-operations' && <NativeOperationsPanel connected={isConnected} catalog={catalog} apply={applyOp} restore={restoreOp} />}
 
         {/* Tab 1: Overview / Dashboard */}
         {(activeTab === 'dashboard' || activeTab === 'overview') && (
@@ -412,7 +416,7 @@ export default function App() {
 
         {/* Tab 4: Laboratorio PresentMon (Telemetría Empírica & Sub-tabs de Rendimiento) */}
         {activeTab === 'presentmon' && (
-          <PresentMonLab isNativeConnected={isConnected} />
+          <FrameStabilityLab connected={isConnected} />
         )}
 
         {/* Tab 6: Base de Conocimiento (Mitos Desmentidos) */}

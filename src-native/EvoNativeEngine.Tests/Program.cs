@@ -82,6 +82,37 @@ gameProvider.IgnoreWrites = false;
 Assert((await gaming.ExecuteAsync("gaming.cs2.priority.restore", false)).Success, "Restore action alias");
 Console.WriteLine("PASS: game priority preserves affinity, explicit affinity, shared original state, PID reuse, verification and recovery.");
 
+var distribution = Enumerable.Repeat(10.0, 990).Concat(Enumerable.Repeat(100.0, 10)).ToArray();
+var frameStats = FrameBenchmarkService.Calculate(distribution, 60);
+Assert(Math.Abs(frameStats.OnePercentLowFps - 10) < .000001, "1% low tail mean exact fixture");
+Assert(frameStats.P99Ms == 10 && frameStats.P999Ms == 100, "Nearest rank percentiles distinguish P99 from low");
+Assert(Math.Abs(frameStats.AverageFps - 1000.0 / 10.9) < .000001, "FPS over total time, not average instantaneous FPS");
+Assert(frameStats.BudgetMissPercent == 1 && frameStats.StutterPercent == 1, "Budget misses and real hitches retained");
+var realCsv = "Application,ProcessID,SwapChainAddress,MsBetweenPresents\n" +
+    string.Concat(Enumerable.Range(0, 1200).Select(_ => "cs2.exe,10,0x123,40\n"));
+var benchmarkInput = new BenchmarkInput(realCsv, "cs2.exe", "fixed-route", "baseline", 1280, 720, 0, 20, 5);
+var benchmark = FrameBenchmarkService.Analyze(benchmarkInput);
+Assert(benchmark.Metrics.Frames >= 1074 && benchmark.Metrics.Frames <= 1076, "CSV warmup in seconds");
+Assert(benchmark.Metrics.OnePercentLowFps == 25 && benchmark.SourceColumn == "MsBetweenPresents", "CSV actual intervals analyzed");
+var comparisonRuns = Enumerable.Range(0, 6).Select(i => benchmark with {
+    Id = Guid.NewGuid(), Width = i < 3 ? 1280 : 1920, Height = i < 3 ? 720 : 1080,
+    Configuration = i < 3 ? "720p" : "1080p", SourceSha256 = "fixture" + i }).ToArray();
+var ranked = FrameBenchmarkService.Compare(comparisonRuns);
+Assert(ranked.Rankings[0].Width == 1920 && ranked.Rankings.All(r => !r.Provisional && r.MeetsTarget), "Prefer resolution among stable repeated candidates");
+bool rejectedMixed = false;
+try { FrameBenchmarkService.Analyze(benchmarkInput with { Csv = realCsv + "cs2.exe,11,0x456,20\n" }); }
+catch (ArgumentException) { rejectedMixed = true; }
+Assert(rejectedMixed, "Never merge different process instances or swapchains");
+bool rejectedDuplicate = false;
+try { FrameBenchmarkService.Compare([benchmark, benchmark with { Id = Guid.NewGuid() }]); }
+catch (ArgumentException) { rejectedDuplicate = true; }
+Assert(rejectedDuplicate, "Same trace cannot count as independent repetitions");
+bool rejectedContext = false;
+try { FrameBenchmarkService.Compare([benchmark, benchmark with { Scenario = "different-route", SourceSha256 = "other" }]); }
+catch (ArgumentException) { rejectedContext = true; }
+Assert(rejectedContext, "Never compare incompatible scene contexts");
+Console.WriteLine("PASS: CSV validation, warmup, exact fixture metrics, percentile definition, stable candidate ranking, duplicate and context rejection.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();

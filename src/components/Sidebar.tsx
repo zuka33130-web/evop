@@ -30,6 +30,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const menuItems = [
+    { id: 'stability', label: 'Estabilidad y 1% Low', sublabel: 'Capturas reales y comparación', icon: Crosshair, badge: 'Medido' },
+    { id: 'native-operations', label: 'Operaciones Windows', sublabel: 'Catálogo real y restauración', icon: Server, badge: 'Nativo' },
     {
       id: 'dashboard',
       label: 'Panel de Control',
