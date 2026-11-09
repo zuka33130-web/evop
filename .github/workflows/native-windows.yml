@@ -1,0 +1,80 @@
+name: Native Windows build
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet build EVOOPTIMIZER.sln --configuration Release
+      - name: Execute Windows native and real EvoClean acceptance tests
+        env:
+          EVO_CLEANUP_EVIDENCE: native-cleanup-evidence.json
+        run: |
+          dotnet run --project src-native/EvoNativeEngine.Tests --configuration Release 2>&1 | Tee-Object -FilePath native-windows-tests.log
+          if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            $tail = (Get-Content native-windows-tests.log -Tail 18) -join '%0A'
+            Write-Output "::error title=Native Windows acceptance failure::$tail"
+            exit $code
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: EvoClean-Windows-validation
+          path: |
+            native-windows-tests.log
+            native-cleanup-evidence.json
+      - run: dotnet publish src-native/EvoNativeEngine/EvoNativeEngine.csproj --configuration Release --runtime win-x64 --self-contained true -o native-artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EvoNativeEngine-win-x64
+          path: native-artifact/
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun install --frozen-lockfile
+      - run: npm run lint
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Evo-UI-browser-tests
+          path: |
+            test-results/
+            playwright-report/
+  desktop:
+    needs: [build, frontend]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: bun install --frozen-lockfile
+      - run: ./scripts/Publish-EvoDesktop.ps1
+      - run: ./scripts/Test-EvoDesktopPackage.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EvoDesktop-win-x64
+          path: dist-native/desktop-win-x64/

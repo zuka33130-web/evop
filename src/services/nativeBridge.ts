@@ -4,9 +4,10 @@
  * Escuchando exclusivamente en http://127.0.0.1:48120
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
-export const DEFAULT_NATIVE_ENGINE_URL = 'http://127.0.0.1:48120';
+// Same-origin works in WebView2 (including alternate ports), Vite proxy and remote previews.
+export const DEFAULT_NATIVE_ENGINE_URL = '';
 
 export interface EngineStatus {
   isReady: boolean;
@@ -95,20 +96,23 @@ export interface OperationCatalogItem {
   canRestore: boolean;
   isImplemented: boolean;
   requiresConfirmation?: boolean;
+  isReadOnly?: boolean;
+  requiresRestart?: boolean;
+  availabilityReason?: string | null;
   confirmationMessage?: string | null;
 }
 
 export interface RealtimeTelemetryData {
   timestampUtc: string;
   timeString: string;
-  cpuUsagePct: number;
-  cpuClockPct: number;
-  cpuClockMhz: number;
-  gpuUsagePct: number;
-  ramFreeMb: number;
-  ramTotalMb: number;
-  ramUsedPct: number;
-  temperatureCelsius: number;
+  cpuUsagePct: number | null;
+  cpuClockPct: number | null;
+  cpuClockMhz: number | null;
+  gpuUsagePct: number | null;
+  ramFreeMb: number | null;
+  ramTotalMb: number | null;
+  ramUsedPct: number | null;
+  temperatureCelsius: number | null;
   throttlingStatus: string;
   telemetrySource: string;
   isCs2Running: boolean;
@@ -175,9 +179,9 @@ export async function checkEngineStatus(baseUrl = DEFAULT_NATIVE_ENGINE_URL): Pr
     return data;
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      throw new Error(`Tiempo de espera agotado al conectar con ${baseUrl} (3.5s). Verifica que EvoNativeEngine esté corriendo.`);
+      throw new Error(`Tiempo de espera agotado al conectar con ${baseUrl || 'la API local'} (3.5s). Verifica que EvoNativeEngine esté corriendo.`);
     }
-    throw new Error(`No se pudo conectar con el motor nativo en ${baseUrl}. Asegúrate de ejecutar scripts/Start-EvoEngine.ps1 o dotnet run en src-native/EvoNativeEngine.`);
+    throw new Error(`No se pudo conectar con el motor nativo en ${baseUrl || 'la API de este equipo'}. Asegúrate de ejecutar scripts/Start-EvoEngine.ps1 o dotnet run en src-native/EvoNativeEngine.`);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -369,6 +373,7 @@ export async function runEvoClean(mode: 'Scan' | 'Clean' = 'Scan', baseUrl: stri
  * Hook de React para gestionar la conexión, diagnósticos y operaciones del motor C# en tiempo real
  */
 export function useNativeBridge(baseUrl = DEFAULT_NATIVE_ENGINE_URL) {
+  const operationLock = useRef(false);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [engineInfo, setEngineInfo] = useState<EngineStatus | null>(null);
   const [diagnostics, setDiagnostics] = useState<SystemHardwareReport | null>(null);
@@ -410,11 +415,14 @@ export function useNativeBridge(baseUrl = DEFAULT_NATIVE_ENGINE_URL) {
         setCatalog(opsCatalog);
         setHistory(opsHistory);
       } catch (opsErr: any) {
-        console.warn('Advertencia al cargar catálogo de operaciones:', opsErr);
+        setCatalog([]);
+        setError('No se pudo cargar el catálogo real del motor. Reconecta antes de aplicar cambios.');
       }
     } catch (err: any) {
       setConnectionStatus('error');
       setEngineInfo(null);
+      setCatalog([]);
+      setHistory([]);
       setError(err.message || 'Error desconocido al conectar con el motor C#');
       setLastCheckTime(new Date());
       if (isUserInitiated) {
@@ -452,31 +460,35 @@ export function useNativeBridge(baseUrl = DEFAULT_NATIVE_ENGINE_URL) {
   }, [baseUrl, connectionStatus]);
 
   const applyOp = useCallback(async (operationId: string): Promise<OperationResult> => {
-    if (activeOperation) {
+    if (operationLock.current) {
       throw new Error(`Hay otra operación en curso ('${activeOperation}'). Espera a que finalice.`);
     }
 
+    operationLock.current = true;
     setActiveOperation(operationId);
     try {
       const result = await applyOperation(operationId, baseUrl);
       await refreshHistory();
       return result;
     } finally {
+      operationLock.current = false;
       setActiveOperation(null);
     }
   }, [baseUrl, activeOperation, refreshHistory]);
 
   const restoreOp = useCallback(async (operationId: string): Promise<OperationResult> => {
-    if (activeOperation) {
+    if (operationLock.current) {
       throw new Error(`Hay otra operación en curso ('${activeOperation}'). Espera a que finalice.`);
     }
 
+    operationLock.current = true;
     setActiveOperation(operationId);
     try {
       const result = await restoreOperation(operationId, baseUrl);
       await refreshHistory();
       return result;
     } finally {
+      operationLock.current = false;
       setActiveOperation(null);
     }
   }, [baseUrl, activeOperation, refreshHistory]);
@@ -489,6 +501,19 @@ export function useNativeBridge(baseUrl = DEFAULT_NATIVE_ENGINE_URL) {
   useEffect(() => {
     connectAndProbe(false);
   }, [connectAndProbe]);
+
+  useEffect(() => {
+    let stopped = false;
+    const timer = setInterval(async () => {
+      try {
+        const status = await checkEngineStatus(baseUrl);
+        if (!stopped) setEngineInfo(status);
+      } catch {
+        if (!stopped) { setConnectionStatus('error'); setEngineInfo(null); setCatalog([]); setError('Se perdió la conexión con el motor. Reconecta; no se reintentan cambios automáticamente.'); }
+      }
+    }, 15000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [baseUrl]);
 
   return {
     connectionStatus,
