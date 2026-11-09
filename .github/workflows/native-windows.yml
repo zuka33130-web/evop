@@ -16,8 +16,13 @@ jobs:
         env:
           EVO_CLEANUP_EVIDENCE: native-cleanup-evidence.json
         run: |
-          dotnet run --project src-native/EvoNativeEngine.Tests --configuration Release | Tee-Object -FilePath native-windows-tests.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project src-native/EvoNativeEngine.Tests --configuration Release 2>&1 | Tee-Object -FilePath native-windows-tests.log
+          if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            $tail = (Get-Content native-windows-tests.log -Tail 18) -join '%0A'
+            Write-Output "::error title=Native Windows acceptance failure::$tail"
+            exit $code
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

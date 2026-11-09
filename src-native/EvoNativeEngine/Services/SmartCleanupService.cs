@@ -266,7 +266,7 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
             {
                 var parent = selected.FirstOrDefault(s => s.Companion?.Id == item.Id);
                 if ((parent is not null && !completedPrimary.Contains(parent.Id)) || (cancellation.IsCancellationRequested && parent is null))
-                { outcomes.Add(new(item.Path, item.Category, "skipped", "Cancelado antes de modificar este archivo.", item.Bytes)); continue; }
+                { outcomes.Add(new(item.Path, item.Category, "skipped", parent is not null ? "Payload no movido; metadatos de papelera conservados junto a él." : "Cancelado antes de modificar este archivo.", item.Bytes)); continue; }
                 try
                 {
                     string? target = null;

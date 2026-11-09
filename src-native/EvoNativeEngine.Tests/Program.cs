@@ -233,6 +233,8 @@ if (OperatingSystem.IsWindows())
         var thumbnail = await Old(thumbnailRoot, "thumbcache_fixture.db", "thumbnail payload");
         var notThumbnail = await Old(thumbnailRoot, "personal.docx", "never selected by thumbnail scanner");
         var personal = await Old(personalRoot, "family.jpg", "never scanned");
+        var hardLink = Path.Combine(tempRoot, "shared-personal.tmp");
+        NativeCleanupFixture.HardLink(hardLink, personal);
         var recyclePayload = await Old(recycleRoot, "$Rfixture.tmp", "recycled-payload");
         var recycleMetadata = await Old(recycleRoot, "$Ifixture.tmp", "recycle-metadata-fixture");
         var large = Path.Combine(tempRoot, "large.tmp");
@@ -250,7 +252,7 @@ if (OperatingSystem.IsWindows())
             Assert(scan.Outcomes!.Any(o => o.Path == locked && o.Status == "skipped"), "Locked-file reason is not silently discarded");
         }
         Assert(scan.Items.Any(i => i.Path == large && i.Bytes == 70L * 1024 * 1024), "Analysis includes large files, no historical 64MB estimate/cap");
-        Assert(!scan.Items.Any(i => i.Path == personal || i.Path == notThumbnail || i.Path == recent || i.Path == readOnly), "Personal/outside-category/recent/read-only files protected");
+        Assert(!scan.Items.Any(i => i.Path == personal || i.Path == hardLink || i.Path == notThumbnail || i.Path == recent || i.Path == readOnly), "Personal/outside-category/recent/read-only files protected");
         var recycled = scan.Items.Single(i => i.Path == recyclePayload);
         Assert(recycled.Companion?.Path == recycleMetadata, "Recycle payload is inseparable from its user metadata in selection");
         Assert(scan.LogicalBytes == scan.Items.Where(i => i.Kind == "File").Sum(i => i.Bytes + (i.Companion?.Bytes ?? 0)), "Exact observed logical sum including recycle metadata");
@@ -312,8 +314,8 @@ if (OperatingSystem.IsWindows())
             var data = await File.ReadAllBytesAsync(path);
             if (data.Length < 28) continue;
             var offset = BitConverter.ToInt64(data, 0) == 2 ? 28 : 24;
-            var original = System.Text.Encoding.Unicode.GetString(data, offset, data.Length - offset).TrimEnd('\0');
-            if (string.Equals(original, shellOriginal, StringComparison.OrdinalIgnoreCase)) { realMetadata = path; break; }
+            var shellPathFromMetadata = System.Text.Encoding.Unicode.GetString(data, offset, data.Length - offset).TrimEnd('\0');
+            if (string.Equals(shellPathFromMetadata, shellOriginal, StringComparison.OrdinalIgnoreCase)) { realMetadata = path; break; }
         }
         Assert(realMetadata is not null, "Found real Shell $I metadata referencing only our fixture path");
         var realPayload = Path.Combine(realBin.Value, "$R" + Path.GetFileName(realMetadata!)[2..]);
@@ -332,6 +334,14 @@ if (OperatingSystem.IsWindows())
         realBinQuarantine = await realBinService.QuarantineAsync(new(realBinPlan.Id, [realBinPlan.Items.Single(i=>i.Path==realPayload).Id]));
         var realBinPurged = await realBinService.PurgeAsync(realBinQuarantine.Id, "ELIMINAR DEFINITIVAMENTE");
         Assert(realBinPurged.Errors.Count == 0 && realBinPurged.Items.Count == 0 && !File.Exists(realMetadata!) && !File.Exists(realPayload), "Purge actually removes only our recycled entry and its metadata");
+        Console.WriteLine("::notice title=EvoClean real Windows acceptance::" + JsonSerializer.Serialize(new {
+            RealFileSystem = true, RealShellRecycle = true, LargeFileBytes = 70L * 1024 * 1024,
+            LogicalDeletedBlockedPurge = blockedPurge.BytesDeleted, LogicalDeletedRetry = retriedPurge.BytesDeleted,
+            FreeBefore = blockedPurge.Volumes![0].FreeBefore, FreeAfter = blockedPurge.Volumes[0].FreeAfter,
+            SignedObservedDelta = blockedPurge.Volumes[0].ObservedFreeDelta,
+            CancelledPurgeRetainedItems = stoppedPurge.Items.Count, ShellDeletedBytes = realBinPurged.BytesDeleted,
+            LockedReadonlyPersonalAndHardLinksProtected = true
+        }));
         var evidencePath = Environment.GetEnvironmentVariable("EVO_CLEANUP_EVIDENCE");
         if (!string.IsNullOrWhiteSpace(evidencePath))
             await File.WriteAllTextAsync(evidencePath, JsonSerializer.Serialize(new {
@@ -641,6 +651,13 @@ sealed class NativeCleanupFixture
     }
     [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, ExactSpelling=true)]
     private static extern int SHFileOperationW(ref ShellOperation operation);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string path, string target, IntPtr attributes);
+    public static void HardLink(string path, string target)
+    {
+        if (!CreateHardLinkW(path, target, IntPtr.Zero)) throw new IOException("Hardlink fixture creation failed.");
+    }
     public static void Recycle(string path)
     {
         var operation = new ShellOperation { Function = 3, From = path + "\0\0", Flags = 0x0454 };
