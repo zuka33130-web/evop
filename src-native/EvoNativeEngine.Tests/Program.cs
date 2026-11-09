@@ -301,6 +301,28 @@ if (OperatingSystem.IsWindows())
         Assert(stoppedPurge.Cancelled && stoppedPurge.Items.Count == 1 && stoppedPurge.BytesDeleted == cancellationPurgeSource.Items[0].Original.Bytes, "Purge cancellation retains remaining recovery data and exact completed bytes");
         Assert((await service.RestoreAsync(stoppedPurge.Id)).Errors.Count == 0 && File.Exists(exact) && !File.Exists(thumbnail), "Recovery restores only non-purged files after cancellation");
         Assert(!service.RequestCancellation() && service.Progress.Action == "idle", "No stale cancellation token after an operation");
+        // Allocate real non-compressible data, not SetLength/sparse bytes, and measure the volume around actual deletion.
+        var measuredFile = Path.Combine(tempRoot, "measured-space.tmp");
+        var block = System.Security.Cryptography.RandomNumberGenerator.GetBytes(8 * 1024 * 1024);
+        using (var allocated = new FileStream(measuredFile, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            for (int n = 0; n < 4; n++) await allocated.WriteAsync(block);
+            allocated.Flush(flushToDisk: true);
+        }
+        File.SetLastWriteTimeUtc(measuredFile, DateTime.UtcNow.AddDays(-10));
+        var measuredPlan = await service.ScanAsync();
+        var measuredCandidate = measuredPlan.Items.Single(i => i.Path == measuredFile);
+        Assert(measuredCandidate.Bytes == 32L * 1024 * 1024 && measuredCandidate.AllocatedBytes > 0, "Analyze actual allocated non-compressible 32MiB file");
+        var measuredQuarantine = await service.QuarantineAsync(new(measuredPlan.Id, [measuredCandidate.Id]));
+        var measuredPurge = await service.PurgeAsync(measuredQuarantine.Id, "ELIMINAR DEFINITIVAMENTE");
+        Assert(measuredPurge.Errors.Count == 0 && measuredPurge.BytesDeleted == 32L * 1024 * 1024 && measuredPurge.Items.Count == 0 &&
+            !File.Exists(measuredQuarantine.Items.Single().StoredPath!), "Actually delete 32MiB and verify absence");
+        Assert(measuredPurge.Volumes!.Single().FreeBefore.HasValue && measuredPurge.Volumes.Single().FreeAfter.HasValue &&
+            measuredPurge.Volumes.Single().ObservedFreeDelta == measuredPurge.Volumes.Single().FreeAfter - measuredPurge.Volumes.Single().FreeBefore,
+            "Measure signed free-space delta after large-file deletion without substituting logical size");
+        var persistedMeasurement = await store.GetLastStateAsync<CleanupReceipt>("cleanup." + measuredQuarantine.Id.ToString("N"));
+        Assert(persistedMeasurement!.BytesDeleted == measuredPurge.BytesDeleted && persistedMeasurement.Volumes!.Single() == measuredPurge.Volumes.Single(), "Persist exact Windows measurement in recoverable receipt");
+
         // Exercise the actual Windows Shell recycle bin for this uniquely named test file only.
         var shellOriginal = Path.Combine(personalRoot, "evo-shell-" + Guid.NewGuid().ToString("N") + ".tmp");
         await File.WriteAllTextAsync(shellOriginal, "actual Windows recycled payload");
@@ -339,6 +361,10 @@ if (OperatingSystem.IsWindows())
             LogicalDeletedBlockedPurge = blockedPurge.BytesDeleted, LogicalDeletedRetry = retriedPurge.BytesDeleted,
             FreeBefore = blockedPurge.Volumes![0].FreeBefore, FreeAfter = blockedPurge.Volumes[0].FreeAfter,
             SignedObservedDelta = blockedPurge.Volumes[0].ObservedFreeDelta,
+            LargePurgeLogicalBytes = measuredPurge.BytesDeleted,
+            LargePurgeFreeBefore = measuredPurge.Volumes![0].FreeBefore,
+            LargePurgeFreeAfter = measuredPurge.Volumes[0].FreeAfter,
+            LargePurgeObservedDelta = measuredPurge.Volumes[0].ObservedFreeDelta,
             CancelledPurgeRetainedItems = stoppedPurge.Items.Count, ShellDeletedBytes = realBinPurged.BytesDeleted,
             LockedReadonlyPersonalAndHardLinksProtected = true
         }));
@@ -351,6 +377,7 @@ if (OperatingSystem.IsWindows())
                 SameSizeTimestampContentTamperingRejected = true, CancellationBetweenFilesVerified = true,
                 RealShellRecycleQuarantineRestorePurge = true,
                 PartialPurge = blockedPurge, RetryPurge = retriedPurge, CancelledPurge = stoppedPurge,
+                LargeMeasuredPurge = measuredPurge,
                 ShellPurge = realBinPurged
             }, new JsonSerializerOptions { WriteIndented = true }));
 

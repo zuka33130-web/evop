@@ -68,7 +68,7 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
             ["Temporales de usuario"] = Path.Combine(local, "Temp"),
             ["Temporales de Windows"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"),
             ["Miniaturas de usuario"] = Path.Combine(local, @"Microsoft\Windows\Explorer"),
-            ["Residuos Discord (logs)"] = Path.Combine(local, @"Discord\logs"),
+            ["Residuos Discord (logs)"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"discord\logs"),
             ["Caché Discord"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"discord\Cache"),
             ["Residuos Chrome (crashes)"] = Path.Combine(local, @"Google\Chrome\User Data\Crashpad\reports"),
             ["Residuos Edge (crashes)"] = Path.Combine(local, @"Microsoft\Edge\User Data\Crashpad\reports"),
@@ -156,6 +156,8 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
             {
                 if (cancellation.IsCancellationRequested) { complete = false; break; }
                 if (!Directory.Exists(root)) { Omit(root, category, "Ubicación ausente o inaccesible."); continue; }
+                if (!string.Equals(Path.GetPathRoot(root), Path.GetPathRoot(StateDir), StringComparison.OrdinalIgnoreCase))
+                { Omit(root, category, "Otra unidad: no se contabiliza como recuperable sin cuarentena en el mismo volumen."); continue; }
                 if (BrowserActive(category)) { Omit(root, category, "Aplicación activa: caché/residuos omitidos."); continue; }
                 var pending = new Stack<(string Path, int Depth)>(); pending.Push((root, 0));
                 while (pending.Count > 0)
