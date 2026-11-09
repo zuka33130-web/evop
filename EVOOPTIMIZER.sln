@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "EvoDesktop", "src-native\EvoDesktop\EvoDesktop.csproj", "{8F5AA457-E21C-4CB1-A68E-CE599D887C77}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "EvoNativeEngine", "src-native\EvoNativeEngine\EvoNativeEngine.csproj", "{D60CF86B-EED0-4D9F-8491-C4C9D435BC26}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "EvoNativeEngine.Tests", "src-native\EvoNativeEngine.Tests\EvoNativeEngine.Tests.csproj", "{50DFABF3-EAFB-452B-8711-796E4DA54589}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8F5AA457-E21C-4CB1-A68E-CE599D887C77}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8F5AA457-E21C-4CB1-A68E-CE599D887C77}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8F5AA457-E21C-4CB1-A68E-CE599D887C77}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8F5AA457-E21C-4CB1-A68E-CE599D887C77}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D60CF86B-EED0-4D9F-8491-C4C9D435BC26}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D60CF86B-EED0-4D9F-8491-C4C9D435BC26}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D60CF86B-EED0-4D9F-8491-C4C9D435BC26}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D60CF86B-EED0-4D9F-8491-C4C9D435BC26}.Release|Any CPU.Build.0 = Release|Any CPU
+		{50DFABF3-EAFB-452B-8711-796E4DA54589}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{50DFABF3-EAFB-452B-8711-796E4DA54589}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{50DFABF3-EAFB-452B-8711-796E4DA54589}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{50DFABF3-EAFB-452B-8711-796E4DA54589}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

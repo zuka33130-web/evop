@@ -22,7 +22,6 @@ EvoDesktop.exe
 [dependencias autocontenidas .NET/WebView2]
 engine/
   EvoNativeEngine.exe
-  Scripts/Invoke-EvoClean.ps1
   wwwroot/index.html
   wwwroot/assets/...
 ```

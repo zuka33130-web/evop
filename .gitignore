@@ -22,3 +22,6 @@ test-results/
 # Native Windows acceptance evidence (uploaded by CI, not source)
 native-cleanup-evidence.json
 native-windows-tests.log
+
+# Source distribution archives (not source files)
+/deliverables/
