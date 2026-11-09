@@ -13,11 +13,12 @@ import { useNativeBridge } from './services/nativeBridge';
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const native = useNativeBridge();
+  const [panelBusy, setPanelBusy] = useState(false);
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [captureBusy, setCaptureBusy] = useState(false);
   const guardedApply: typeof native.applyOp = async id => {
-    if (captureBusy || workflowBusy || cleanupBusy) throw new Error('Medición en curso: espera a que termine antes de aplicar cambios.');
+    if (captureBusy || workflowBusy || cleanupBusy || panelBusy) throw new Error('Medición en curso: espera a que termine antes de aplicar cambios.');
     return native.applyOp(id);
   };
   const [launching, setLaunching] = useState(false);
@@ -44,13 +45,13 @@ export default function App() {
         {captureBusy && activeTab !== 'stability' && <div className="notice">Hay una medición en curso. No apliques cambios externos durante la captura. <button className="underline" onClick={() => setActiveTab('stability')}>Ver progreso →</button></div>}
         {workflowBusy && activeTab !== 'studio' && <div className="notice">Se está preparando una plantilla o sesión. Espera el recibo antes de aplicar otros cambios. <button className="underline" onClick={() => setActiveTab('studio')}>Ver progreso →</button></div>}
         {cleanupBusy && activeTab !== 'cleaner' && <div className="notice">Limpieza en curso. Espera su resultado antes de medir. <button className="underline" onClick={() => setActiveTab('cleaner')}>Ver limpieza →</button></div>}
-        {activeTab === 'dashboard' && <PerformanceDashboard native={native} navigate={setActiveTab} launchGame={launchGame} launching={launching || captureBusy || workflowBusy || cleanupBusy} launchMessage={launchMessage} />}
-        {activeTab === 'native-operations' && <NativeOperationsPanel connected={native.isConnected} elevated={!!native.engineInfo?.isElevated} globalBusy={!!native.activeOperation || captureBusy || workflowBusy || cleanupBusy} catalog={native.catalog} onMeasure={() => setActiveTab('stability')} apply={guardedApply} restore={native.restoreOp} />}
+        {activeTab === 'dashboard' && <PerformanceDashboard native={native} navigate={setActiveTab} launchGame={launchGame} launching={launching || captureBusy || workflowBusy || cleanupBusy || panelBusy} launchMessage={launchMessage} />}
+        <div hidden={activeTab !== 'native-operations'}><NativeOperationsPanel onBusyChange={setPanelBusy} connected={native.isConnected} elevated={!!native.engineInfo?.isElevated} globalBusy={!!native.activeOperation || captureBusy || workflowBusy || cleanupBusy} catalog={native.catalog} onMeasure={() => setActiveTab('stability')} apply={guardedApply} restore={native.restoreOp} /></div>
         {activeTab === 'diagnostics' && <section className="space-y-5"><h1 className="text-2xl font-bold">Diagnóstico del equipo</h1><NativeDiagnosticsCard status={native.connectionStatus} engineInfo={native.engineInfo} diagnostics={native.diagnostics} error={native.error} isScanning={native.isScanning} onReconnect={native.reconnect} onRefresh={native.refreshScan} catalog={native.catalog} history={native.history} /></section>}
-        <div hidden={activeTab !== 'studio'}><OptimizationStudio visible={activeTab === 'studio'} connected={native.isConnected} globalBusy={captureBusy || cleanupBusy || !!native.activeOperation} onBusyChange={setWorkflowBusy} onMeasure={() => setActiveTab('stability')} restorePriority={() => native.restoreOp('gaming.cs2.priority')} /></div>
-        <div hidden={activeTab !== 'stability'}><FrameStabilityLab externalBusy={workflowBusy || cleanupBusy || !!native.activeOperation} connected={native.isConnected} onBusyChange={setCaptureBusy} /></div>
-        <div hidden={activeTab !== 'cleaner'}><SmartCleanup onBusyChange={setCleanupBusy} externalBusy={captureBusy || workflowBusy || !!native.activeOperation} connected={native.isConnected} /></div>
-        <div hidden={activeTab !== 'advisor'}><LocalAuditAdvisor externalBusy={captureBusy || workflowBusy || cleanupBusy} onStudio={() => setActiveTab('studio')} catalog={native.catalog} elevated={!!native.engineInfo?.isElevated} connected={native.isConnected} apply={guardedApply} onMeasure={() => setActiveTab('stability')} /></div>
+        <div hidden={activeTab !== 'studio'}><OptimizationStudio visible={activeTab === 'studio'} connected={native.isConnected} globalBusy={panelBusy || captureBusy || cleanupBusy || !!native.activeOperation} onBusyChange={setWorkflowBusy} onMeasure={() => setActiveTab('stability')} restorePriority={() => native.restoreOp('gaming.cs2.priority')} /></div>
+        <div hidden={activeTab !== 'stability'}><FrameStabilityLab externalBusy={panelBusy || workflowBusy || cleanupBusy || !!native.activeOperation} connected={native.isConnected} onBusyChange={setCaptureBusy} /></div>
+        <div hidden={activeTab !== 'cleaner'}><SmartCleanup onBusyChange={setCleanupBusy} externalBusy={panelBusy || captureBusy || workflowBusy || !!native.activeOperation} connected={native.isConnected} /></div>
+        <div hidden={activeTab !== 'advisor'}><LocalAuditAdvisor externalBusy={captureBusy || workflowBusy || cleanupBusy || panelBusy} onStudio={() => setActiveTab('studio')} catalog={native.catalog} elevated={!!native.engineInfo?.isElevated} connected={native.isConnected} apply={guardedApply} onMeasure={() => setActiveTab('stability')} /></div>
         {activeTab === 'knowledge' && <ResearchSources />}
         {activeTab === 'history' && <section className="space-y-4"><h1 className="text-2xl font-bold">Historial del motor</h1><p className="text-sm text-neutral-400">Resultados de aplicación y restauración. No confundir cambio aplicado con mejora de rendimiento. Este historial es de la sesión del motor.</p><button disabled={!native.isConnected} className="underline" onClick={native.refreshHistory}>Actualizar historial</button>
           {!native.history.length && <p>No hay operaciones registradas.</p>}

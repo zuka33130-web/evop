@@ -19,12 +19,13 @@ public sealed class EvoCleanService(SmartCleanupService cleanup) : IEvoCleanServ
     {
         if (!mode.Equals("Scan", StringComparison.OrdinalIgnoreCase))
             return new() { Mode = mode, Details = "La limpieza sin selección está deshabilitada. Usa Limpieza inteligente: vista previa, cuarentena y confirmación de purga." };
+        var timer = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var plan = await cleanup.ScanAsync();
-            return new() { Status = "success", ScannedMB = plan.Items.Sum(i => i.Bytes) / 1048576.0,
+            return new() { Status = "success", DurationMs = timer.ElapsedMilliseconds, ScannedMB = plan.Items.Sum(i => i.Bytes) / 1048576.0,
                 Details = $"{plan.Items.Count} candidatos. No se modificó nada. Usa la vista previa de Limpieza inteligente para seleccionar." };
         }
-        catch (Exception ex) { return new() { Details = ex.Message }; }
+        catch (Exception ex) { return new() { Details = ex.Message, DurationMs = timer.ElapsedMilliseconds }; }
     }
 }

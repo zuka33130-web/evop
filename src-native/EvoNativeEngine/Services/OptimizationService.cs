@@ -208,47 +208,16 @@ public class OptimizationService : IOptimizationService
                 : PowerOperations.Supports(operationId) ? await PowerOperations.ExecuteAsync(operationId, false)
                 : operationId switch
             {
-                // Diagnóstico y Telemetría
-                "system.hardware.refresh" => await ExecuteHardwareRefreshAsync(logs, sw),
+                "system.hardware.refresh" or "cortex.mode.bench" => await ExecuteHardwareRefreshAsync(logs, sw),
                 "system.processes.list" => await ExecuteProcessesListAsync(logs, sw),
                 "telemetry.realtime" => await ExecuteTelemetryReadAsync(logs, sw),
-                "system.temp.cleanup" or "cortex.mode.cleanup" => await ExecuteTempCleanupAsync(logs, sw),
-
-                // CS2 Gaming
                 "gaming.cs2.detect" or "cortex.mode.watchdog" => await ExecuteCs2DetectAndAffinityAsync(logs, sw),
                 "gaming.cs2.launch" => await ExecuteCs2LaunchWithConfirmationAsync(logs, sw),
-                "gaming.cs2.priority" or "cortex.mode.bestia" or "tweak.cpu.affinity_15" => await ExecuteCs2PriorityAndAffinityAsync(logs, sw),
-                "gaming.cs2.priority.restore" => await ExecuteCs2PriorityRestoreWithValidationAsync(logs, sw),
-
-                // Modos Cortex
-                "cortex.mode.torneo" => await ExecuteTorneoModeAsync(logs, sw),
-                "cortex.mode.nucleo" or "cortex.mode.iniciar_todo" => await ExecuteNucleoOptimizationAsync(logs, sw),
-                "cortex.mode.timers" => await ExecuteTimersOptimizationAsync(logs, sw),
-                "cortex.mode.gpu" or "tweak.gpu.mpo_fix" or "tweak.gpu.hags" or "tweak.gpu.tdr_delay" => await ExecuteGpuOptimizationAsync(logs, sw),
-                "cortex.mode.stutter" or "tweak.memory.pagecombining_off" or "tweak.memory.pagefile_fixed" => await ExecuteMemoryStutterOptimizationAsync(logs, sw),
-                "cortex.mode.network" or "tweak.network.nagle_off" or "tweak.network.autotuning_high" => await ExecuteNetworkOptimizationAsync(logs, sw),
-                "cortex.mode.debloat" or "cortex.mode.services" or "tweak.services.gaming_toggle" => await ExecuteServicesOptimizationAsync(logs, sw),
-                "cortex.mode.vbs" => await ExecuteVbsToggleAsync(logs, sw),
-                "cortex.mode.bench" => await ExecuteHardwareRefreshAsync(logs, sw),
-                "cortex.mode.cfg" => await ExecuteDeployCfgAsync(logs, sw),
-                "cortex.mode.restore" or "cortex.mode.extreme_undo" => await ExecuteGlobalRestoreAsync(logs, sw),
-                "cortex.mode.auto_pre_game" => await ExecuteAutoPreGameAsync(logs, sw),
-                "cortex.mode.extreme_v2" => await ExecuteExtremeV2Async(logs, sw),
-                "cortex.mode.god_mode" => await ExecuteGodModeAsync(logs, sw),
-
-                // Tweaks específicos de CPU y Seguridad
-                "tweak.cpu.idledisable" => await ExecutePowerIdleDisableAsync(logs, sw),
-                "tweak.cpu.powerthrottling_off" => await ExecutePowerThrottlingOffAsync(logs, sw),
-                "tweak.cpu.win32priority" => await ExecuteWin32PrioritySeparationAsync(logs, sw),
-                "tweak.disk.trim_nvme" or "tweak.disk.disablelastaccess" => await ExecuteDiskTrimOptimizationAsync(logs, sw),
-                "tweak.security.defender_exclusions" => await ExecuteDefenderExclusionsAsync(logs, sw),
-                "tweak.services.update_pause" => await ExecuteUpdatePauseAsync(logs, sw),
-
-                _ => throw new InvalidOperationException($"La operación '{operationId}' no tiene un ejecutor nativo asignado.")
+                _ => throw new NotSupportedException($"La operación '{operationId}' no tiene un ejecutor verificado.")
             };
 
-            RecordHistory(operationId, "apply", result.Success, result.DurationMs, 
-                result.Success ? "Operación ejecutada y confirmada" : "Operación finalizada con advertencia", 
+            RecordHistory(operationId, "apply", result.Success, result.DurationMs,
+                result.Success ? "Solicitud procesada: consulta alcance y lectura posterior en el resultado" : "Operación finalizada con advertencia",
                 result.ErrorMessage);
 
             return result;
@@ -316,18 +285,10 @@ public class OptimizationService : IOptimizationService
                 ? await RegistryOperations.ExecuteAsync(operationId, true)
                 : TuningOperations.Supports(operationId) ? await TuningOperations.ExecuteAsync(operationId, true)
                 : PowerOperations.Supports(operationId) ? await PowerOperations.ExecuteAsync(operationId, true)
-                : operationId switch
-            {
-                "gaming.cs2.priority" or "gaming.cs2.priority.restore" or "cortex.mode.bestia" or "tweak.cpu.affinity_15" => 
-                    await ExecuteCs2PriorityRestoreWithValidationAsync(logs, sw),
-                "cortex.mode.torneo" => await ExecuteTorneoRestoreAsync(logs, sw),
-                "cortex.mode.services" or "tweak.services.gaming_toggle" => await ExecuteServicesRestoreAsync(logs, sw),
-                "cortex.mode.restore" or "cortex.mode.extreme_undo" => await ExecuteGlobalRestoreAsync(logs, sw),
-                _ => await ExecuteGenericRestoreFromBackupAsync(operationId, logs, sw)
-            };
+                : throw new NotSupportedException($"La operación '{operationId}' no dispone de restauración verificada. Respaldo conservado.");
 
-            RecordHistory(operationId, "restore", result.Success, result.DurationMs, 
-                result.Success ? "Valores originales restaurados con éxito" : "Fallo al restaurar valores", 
+            RecordHistory(operationId, "restore", result.Success, result.DurationMs,
+                result.Success ? "Valores originales restaurados con éxito" : "Fallo al restaurar valores",
                 result.ErrorMessage);
 
             return result;
@@ -546,6 +507,7 @@ public class OptimizationService : IOptimizationService
                 return new ProcessSummaryItem(p.Id, p.ProcessName, p.WorkingSet64, Math.Round(p.WorkingSet64 / (1024.0 * 1024.0), 1), GetSafePriorityClass(p));
             }
             catch { return null; }
+            finally { p.Dispose(); }
         })
         .Where(p => p != null)
         .OrderByDescending(p => p!.WorkingSetBytes)
@@ -564,56 +526,6 @@ public class OptimizationService : IOptimizationService
     }
 
     // 3. Limpieza Segura de Temporales
-    private Task<OperationResult> ExecuteTempCleanupAsync(List<string> logs, Stopwatch sw)
-    {
-        string tempPath = Path.GetTempPath();
-        logs.Add($"[LIMPIEZA] Inspeccionando directorio de temporales del usuario: {tempPath}");
-
-        int deleted = 0;
-        int skipped = 0;
-        long freedBytes = 0;
-        DateTime cutoff = DateTime.UtcNow.AddMinutes(-30);
-
-        try
-        {
-            var dir = new DirectoryInfo(tempPath);
-            foreach (var file in dir.GetFiles("*.*", SearchOption.TopDirectoryOnly))
-            {
-                if (file.LastWriteTimeUtc > cutoff)
-                {
-                    skipped++;
-                    continue;
-                }
-
-                try
-                {
-                    long len = file.Length;
-                    file.Delete();
-                    deleted++;
-                    freedBytes += len;
-                }
-                catch
-                {
-                    skipped++;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO] {ex.Message}");
-        }
-
-        double mb = Math.Round(freedBytes / (1024.0 * 1024.0), 2);
-        logs.Add($"[RESULTADO] Archivos purgados: {deleted} | Archivos en uso/omitidos con seguridad: {skipped}");
-        logs.Add($"[ESPACIO LIBERADO] {mb} MB ({freedBytes:N0} bytes)");
-
-        sw.Stop();
-        logs.Add($"[OK] Limpieza finalizada en {sw.Elapsed.TotalMilliseconds:F1} ms.");
-
-        var state = new TempCleanupState(deleted, skipped, freedBytes, mb, tempPath);
-        return Task.FromResult(new OperationResult(true, "system.temp.cleanup", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, state, null, false));
-    }
-
     // 4. Lanzamiento de CS2 con confirmación activa de arranque (Requerimiento 5)
     private async Task<OperationResult> ExecuteCs2LaunchWithConfirmationAsync(List<string> logs, Stopwatch sw)
     {
@@ -662,13 +574,6 @@ public class OptimizationService : IOptimizationService
         }
     }
 
-    // All callers, including legacy internal paths, use the instance-bound engine.
-    private Task<OperationResult> ExecuteCs2PriorityAndAffinityAsync(List<string> logs, Stopwatch sw) =>
-        GameOperations.ExecuteAsync("gaming.cs2.priority", false);
-
-    private Task<OperationResult> ExecuteCs2PriorityRestoreWithValidationAsync(List<string> logs, Stopwatch sw) =>
-        GameOperations.ExecuteAsync("gaming.cs2.priority", true);
-
     // 7. Watchdog Loop Detección y Afinidad
     private Task<OperationResult> ExecuteCs2DetectAndAffinityAsync(List<string> logs, Stopwatch sw)
     {
@@ -680,371 +585,6 @@ public class OptimizationService : IOptimizationService
 
         sw.Stop();
         return Task.FromResult(new OperationResult(true, "gaming.cs2.detect", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, state, null, false));
-    }
-
-    // 8. Modo Torneo (Composición DWM / Ventanas)
-    private async Task<OperationResult> ExecuteTorneoModeAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[TORNEO] Optimizando composición de escritorio y animaciones DWM...");
-        var backup = new { EnableTransparency = 1, VisualFX = 1, Timestamp = DateTime.UtcNow };
-        await _backupManager.SaveStateAsync("cortex.mode.torneo", backup);
-        logs.Add("[SNAPSHOT] Estado visual guardado para restauración segura.");
-
-        // Ajustes de registro seguros de usuario
-        try
-        {
-            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            if (key != null)
-            {
-                key.SetValue("EnableTransparency", 0, Microsoft.Win32.RegistryValueKind.DWord);
-                logs.Add("[REGISTRO] Transparencias de Windows desactivadas (Ahorro de VRAM para Intel UHD).");
-            }
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO REGISTRO] {ex.Message}");
-        }
-
-        sw.Stop();
-        logs.Add($"[OK] Modo Torneo activo en {sw.Elapsed.TotalMilliseconds:F1} ms (Explorer protegido).");
-        return new OperationResult(true, "cortex.mode.torneo", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { TransparencyDisabled = true }, null, false);
-    }
-
-    private async Task<OperationResult> ExecuteTorneoRestoreAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[TORNEO RESTAURAR] Restaurando transparencias y efectos visuales de Windows...");
-        try
-        {
-            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            if (key != null)
-            {
-                key.SetValue("EnableTransparency", 1, Microsoft.Win32.RegistryValueKind.DWord);
-                logs.Add("[REGISTRO] Transparencias restauradas a su valor original.");
-            }
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO] {ex.Message}");
-        }
-
-        await _backupManager.ClearBackupAsync("cortex.mode.torneo");
-        sw.Stop();
-        return new OperationResult(true, "cortex.mode.torneo", "restore", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, new { TransparencyDisabled = false }, null, true);
-    }
-
-    // 9. Núcleo, Energía y BCD
-    private async Task<OperationResult> ExecuteNucleoOptimizationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[NÚCLEO] Configurando plan de energía de máximo rendimiento y TRIM de almacenamiento...");
-        var backup = new { PowerScheme = "Balanced", AppliedAt = DateTime.UtcNow };
-        await _backupManager.SaveStateAsync("cortex.mode.nucleo", backup);
-
-        try
-        {
-            // Ejecutar comando seguro de activación de esquema de rendimiento
-            RunProcessSync("powercfg", "-setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", logs);
-            logs.Add("[POWER] Plan de Alto Rendimiento verificado en Windows.");
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO POWER] {ex.Message}");
-        }
-
-        sw.Stop();
-        return new OperationResult(true, "cortex.mode.nucleo", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { HighPerformanceActive = true }, null, false);
-    }
-
-    // 10. Timers TSC
-    private async Task<OperationResult> ExecuteTimersOptimizationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[TIMERS] Aplicando optimización de temporizador de alta frecuencia TSC...");
-        var backup = new { DisabledDynamicTick = false, TscSyncPolicy = "Default" };
-        await _backupManager.SaveStateAsync("cortex.mode.timers", backup);
-
-        RunProcessSync("bcdedit", "/set disabledynamictick yes", logs);
-        RunProcessSync("bcdedit", "/set tscsyncpolicy Enhanced", logs);
-        RunProcessSync("bcdedit", "/deletevalue useplatformtick", logs);
-
-        sw.Stop();
-        logs.Add($"[OK] TSC 4GHz verificado en BCDedit en {sw.Elapsed.TotalMilliseconds:F1} ms.");
-        return new OperationResult(true, "cortex.mode.timers", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { TscEnhanced = true }, null, false);
-    }
-
-    // 11. GPU Intel UHD, MPO Fix y HAGS
-    private async Task<OperationResult> ExecuteGpuOptimizationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[GPU INTEL] Aplicando MPO Fix (OverlayTestMode=5) y tolerancia TDR...");
-        var backup = new { OverlayTestMode = 0, HwSchMode = 1, TdrDelay = 5 };
-        await _backupManager.SaveStateAsync("cortex.mode.gpu", backup);
-
-        try
-        {
-            using (var dwm = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows\Dwm"))
-            {
-                dwm?.SetValue("OverlayTestMode", 5, Microsoft.Win32.RegistryValueKind.DWord);
-                logs.Add("[REGISTRO] OverlayTestMode fijado en 5 (Multi-Plane Overlay Fix aplicado).");
-            }
-
-            using (var gfx = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"SYSTEM\CurrentControlSet\Control\GraphicsDrivers"))
-            {
-                gfx?.SetValue("HwSchMode", 2, Microsoft.Win32.RegistryValueKind.DWord);
-                gfx?.SetValue("TdrDelay", 10, Microsoft.Win32.RegistryValueKind.DWord);
-                logs.Add("[REGISTRO] HwSchMode=2 (HAGS activo) y TdrDelay=10 verificados.");
-            }
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO REGISTRO] {ex.Message} (Requiere elevación para HKLM)");
-        }
-
-        sw.Stop();
-        return new OperationResult(true, "cortex.mode.gpu", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { MpoFixed = true, Hags = 2 }, null, false);
-    }
-
-    // 12. Memoria y Stutter
-    private async Task<OperationResult> ExecuteMemoryStutterOptimizationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[MEMORIA] Desactivando PageCombining para reducir interrupciones de CPU en 16GB...");
-        var backup = new { PageCombining = true };
-        await _backupManager.SaveStateAsync("cortex.mode.stutter", backup);
-
-        RunProcessSync("powershell", "-NoProfile -Command \"Disable-MMAgent -PageCombining\"", logs);
-
-        sw.Stop();
-        logs.Add($"[OK] Gestión de memoria ajustada en {sw.Elapsed.TotalMilliseconds:F1} ms.");
-        return new OperationResult(true, "cortex.mode.stutter", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { PageCombiningDisabled = true }, null, false);
-    }
-
-    // 13. Red y Nagle
-    private async Task<OperationResult> ExecuteNetworkOptimizationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[RED COMPETITIVA] Configurando TCPNoDelay y TcpAckFrequency en interfaces activas...");
-        var backup = new { TcpNoDelay = 0, TcpAckFrequency = 2 };
-        await _backupManager.SaveStateAsync("cortex.mode.network", backup);
-
-        RunProcessSync("netsh", "int tcp set global autotuninglevel=high", logs);
-        RunProcessSync("netsh", "int tcp set global ecncapability=disabled", logs);
-        RunProcessSync("netsh", "int tcp set global timestamps=disabled", logs);
-
-        logs.Add("[NETSH] TCP Autotuning configurado en High sin timestamps de overhead.");
-
-        sw.Stop();
-        return new OperationResult(true, "cortex.mode.network", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { TcpOptimized = true }, null, false);
-    }
-
-    // 14. Servicios Gaming
-    private async Task<OperationResult> ExecuteServicesOptimizationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[SERVICIOS] Suspendiendo servicios secundarios que compiten por CPU/RAM...");
-        var servicesToPause = new[] { "DiagTrack", "MapsBroker", "Spooler", "WSearch" };
-
-        var backup = new Dictionary<string, string>();
-        foreach (var svc in servicesToPause)
-        {
-            if (_securityService.IsCriticalService(svc)) continue; // Protección de seguridad estricta
-            backup[svc] = "Running";
-            RunProcessSync("net", $"stop \"{svc}\"", logs);
-        }
-
-        await _backupManager.SaveStateAsync("cortex.mode.services", backup);
-        sw.Stop();
-        logs.Add($"[OK] Perfil de servicios gaming aplicado en {sw.Elapsed.TotalMilliseconds:F1} ms (Defender y Update preservados).");
-        return new OperationResult(true, "cortex.mode.services", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { PausedServices = servicesToPause }, null, false);
-    }
-
-    private async Task<OperationResult> ExecuteServicesRestoreAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[SERVICIOS RESTAURAR] Reactivando servicios estándar de Windows...");
-        var backup = await _backupManager.GetLastStateAsync<Dictionary<string, string>>("cortex.mode.services");
-
-        var servicesToStart = backup?.Keys ?? (IEnumerable<string>)new[] { "Spooler", "WSearch" };
-        foreach (var svc in servicesToStart)
-        {
-            RunProcessSync("net", $"start \"{svc}\"", logs);
-        }
-
-        await _backupManager.ClearBackupAsync("cortex.mode.services");
-        sw.Stop();
-        return new OperationResult(true, "cortex.mode.services", "restore", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { Restored = true }, null, true);
-    }
-
-    // 15. VBS Toggle
-    private async Task<OperationResult> ExecuteVbsToggleAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[VBS / HVCI] Consultando estado de hipervisor e integridad de código...");
-        var backup = new { HypervisorLaunchType = "Auto" };
-        await _backupManager.SaveStateAsync("cortex.mode.vbs", backup);
-
-        RunProcessSync("bcdedit", "/set hypervisorlaunchtype off", logs);
-        logs.Add("[AVISO] Para que el cambio de VBS/HVCI tome efecto, se requerirá reiniciar el equipo.");
-
-        sw.Stop();
-        return new OperationResult(true, "cortex.mode.vbs", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { HypervisorLaunchType = "off", RebootRequired = true }, null, false);
-    }
-
-    // 16. Desplegar CFG
-    private async Task<OperationResult> ExecuteDeployCfgAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[AUTOEXEC] Buscando directorio de configuración de Counter-Strike 2...");
-        string steamCommon = @"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\cfg";
-
-        if (!Directory.Exists(steamCommon))
-        {
-            // Fallback a AppData local si no está en la ruta por defecto
-            steamCommon = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EvoOptimizer", "CS2_Config");
-            Directory.CreateDirectory(steamCommon);
-        }
-
-        string autoexecPath = Path.Combine(steamCommon, "autoexec.cfg");
-        string videoPath = Path.Combine(steamCommon, "cs2_video_pn64.txt");
-
-        string cfgContent = "// EVOOPTIMIZER V7 COMPETITIVE AUTOEXEC\nfps_max 0\nrate 1000000\ncl_updaterate 128\ncl_interp 0.015625\necho \"[EVOOPTIMIZER] Autoexec Cargado Correctamente\"\n";
-        await File.WriteAllTextAsync(autoexecPath, cfgContent);
-        logs.Add($"[ARCHIVO ESCRITO] autoexec.cfg guardado en: {autoexecPath}");
-
-        sw.Stop();
-        return new OperationResult(true, "cortex.mode.cfg", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, new { AutoexecPath = autoexecPath }, null, false);
-    }
-
-    // 17. Restauración Global a Stock
-    private async Task<OperationResult> ExecuteGlobalRestoreAsync(List<string> logs, Stopwatch sw)
-    {
-        await Task.CompletedTask;
-        throw new NotSupportedException("La restauración global no garantiza recuperar todos los valores originales. Restaura cada operación compatible individualmente; los respaldos se conservan.");
-    }
-
-    // 18. Auto Pre Game
-    private async Task<OperationResult> ExecuteAutoPreGameAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[AUTO PRE-GAME] Ejecutando secuencia de preparación de partida...");
-        await ExecuteTempCleanupAsync(logs, Stopwatch.StartNew());
-        await ExecuteCs2PriorityAndAffinityAsync(logs, Stopwatch.StartNew());
-        await ExecuteTorneoModeAsync(logs, Stopwatch.StartNew());
-
-        sw.Stop();
-        logs.Add($"[OK] Entorno de partida listo en {sw.Elapsed.TotalMilliseconds:F1} ms.");
-        return new OperationResult(true, "cortex.mode.auto_pre_game", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, new { Ready = true }, null, false);
-    }
-
-    // 19. Extreme V2
-    private async Task<OperationResult> ExecuteExtremeV2Async(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[EXTREME V2] Aplicando tweaks de latencia de kernel y bloqueo de reposo...");
-        await ExecutePowerIdleDisableAsync(logs, Stopwatch.StartNew());
-        await ExecutePowerThrottlingOffAsync(logs, Stopwatch.StartNew());
-        await ExecuteWin32PrioritySeparationAsync(logs, Stopwatch.StartNew());
-        await ExecuteGpuOptimizationAsync(logs, Stopwatch.StartNew());
-
-        sw.Stop();
-        return new OperationResult(true, "cortex.mode.extreme_v2", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, new { ExtremeActive = true }, null, false);
-    }
-
-    // 20. God Mode
-    private Task<OperationResult> ExecuteGodModeAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[GOD MODE] Activando monitoreo continuo de potencia y telemetría en vivo...");
-        sw.Stop();
-        return Task.FromResult(new OperationResult(true, "cortex.mode.god_mode", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, null, new { GodModeActive = true }, null, false));
-    }
-
-    // 21. Tweaks Atómicos
-    private async Task<OperationResult> ExecutePowerIdleDisableAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[POWER] Ajustando IDLEDISABLE a 1 para eliminar vacilación de frecuencia...");
-        var backup = new { IdleDisable = 0 };
-        await _backupManager.SaveStateAsync("tweak.cpu.idledisable", backup);
-
-        RunProcessSync("powercfg", "/setacvalueindex SCHEME_CURRENT SUB_PROCESSOR IDLEDISABLE 1", logs);
-        RunProcessSync("powercfg", "/setactive SCHEME_CURRENT", logs);
-
-        sw.Stop();
-        return new OperationResult(true, "tweak.cpu.idledisable", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { IdleDisable = 1 }, null, false);
-    }
-
-    private async Task<OperationResult> ExecutePowerThrottlingOffAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[POWER] Desactivando PowerThrottling en el registro de Windows...");
-        var backup = new { PowerThrottlingOff = 0 };
-        await _backupManager.SaveStateAsync("tweak.cpu.powerthrottling_off", backup);
-
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"SYSTEM\CurrentControlSet\Control\Power\PowerThrottling");
-            key?.SetValue("PowerThrottlingOff", 1, Microsoft.Win32.RegistryValueKind.DWord);
-            logs.Add("[REGISTRO] PowerThrottlingOff=1 verificado.");
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO] {ex.Message}");
-        }
-
-        sw.Stop();
-        return new OperationResult(true, "tweak.cpu.powerthrottling_off", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { PowerThrottlingOff = 1 }, null, false);
-    }
-
-    private async Task<OperationResult> ExecuteWin32PrioritySeparationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[QUANTUM] Configurando Win32PrioritySeparation a 38 (0x26)...");
-        var backup = new { Win32PrioritySeparation = 2 };
-        await _backupManager.SaveStateAsync("tweak.cpu.win32priority", backup);
-
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"SYSTEM\CurrentControlSet\Control\PriorityControl");
-            key?.SetValue("Win32PrioritySeparation", 38, Microsoft.Win32.RegistryValueKind.DWord);
-            logs.Add("[REGISTRO] Win32PrioritySeparation=38 verificado.");
-        }
-        catch (Exception ex)
-        {
-            logs.Add($"[AVISO] {ex.Message}");
-        }
-
-        sw.Stop();
-        return new OperationResult(true, "tweak.cpu.win32priority", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { Win32PrioritySeparation = 38 }, null, false);
-    }
-
-    private async Task<OperationResult> ExecuteDiskTrimOptimizationAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[DISCO] Verificando DisableDeleteNotify = 0 (TRIM activo)...");
-        var backup = new { DisableDeleteNotify = 0 };
-        await _backupManager.SaveStateAsync("tweak.disk.trim_nvme", backup);
-
-        RunProcessSync("fsutil", "behavior set DisableDeleteNotify 0", logs);
-        RunProcessSync("fsutil", "behavior set disablelastaccess 1", logs);
-
-        sw.Stop();
-        return new OperationResult(true, "tweak.disk.trim_nvme", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { TrimActive = true }, null, false);
-    }
-
-    private async Task<OperationResult> ExecuteDefenderExclusionsAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[DEFENDER] Añadiendo exclusión segura de la ruta de CS2 para evitar escaneos en partida...");
-        var backup = new { ExclusionAdded = true };
-        await _backupManager.SaveStateAsync("tweak.security.defender_exclusions", backup);
-
-        string cs2Path = @"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive";
-        RunProcessSync("powershell", $"-NoProfile -Command \"Add-MpPreference -ExclusionPath '{cs2Path}'\"", logs);
-
-        sw.Stop();
-        return new OperationResult(true, "tweak.security.defender_exclusions", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { ExclusionPath = cs2Path }, null, false);
-    }
-
-    private async Task<OperationResult> ExecuteUpdatePauseAsync(List<string> logs, Stopwatch sw)
-    {
-        logs.Add("[WINDOWS UPDATE] Pausando servicio de actualizaciones temporalmente para evitar lag...");
-        var backup = new { Service = "wuauserv", WasRunning = true };
-        await _backupManager.SaveStateAsync("tweak.services.update_pause", backup);
-
-        RunProcessSync("net", "stop \"wuauserv\"", logs);
-
-        sw.Stop();
-        return new OperationResult(true, "tweak.services.update_pause", "apply", DateTime.UtcNow, sw.Elapsed.TotalMilliseconds, logs, backup, new { UpdatePaused = true }, null, false);
-    }
-
-    private async Task<OperationResult> ExecuteGenericRestoreFromBackupAsync(string operationId, List<string> logs, Stopwatch sw)
-    {
-        await Task.CompletedTask;
-        throw new NotSupportedException($"La operación '{operationId}' no dispone de restauración implementada. Respaldo conservado.");
     }
 
     #endregion
@@ -1061,7 +601,8 @@ public class OptimizationService : IOptimizationService
                 return new Cs2ProcessState(false, null, null, null, null, null, "No se encontró el proceso cs2.exe.");
             }
 
-            var p = procs[0];
+            using var p = procs[0];
+            foreach (var other in procs.Skip(1)) other.Dispose();
             string priority = GetSafePriorityClass(p);
             double mb = Math.Round(p.WorkingSet64 / (1024.0 * 1024.0), 1);
             DateTime? startTime = null;
@@ -1100,30 +641,6 @@ public class OptimizationService : IOptimizationService
             var idleElapsed = idle - previous.Value.Idle;
             return idleElapsed <= elapsed ? Math.Clamp(100.0 * (elapsed - idleElapsed) / elapsed, 0, 100) : null;
         }
-    }
-
-    private static void RunProcessSync(string file, string args, List<string> logs)
-    {
-        using var proc = new Process();
-        proc.StartInfo = new ProcessStartInfo
-        {
-            FileName = file, Arguments = args, UseShellExecute = false,
-            RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
-        };
-        proc.Start();
-        var stdout = proc.StandardOutput.ReadToEndAsync();
-        var stderr = proc.StandardError.ReadToEndAsync();
-        if (!proc.WaitForExit(30000))
-        {
-            proc.Kill(entireProcessTree: true);
-            proc.WaitForExit();
-            throw new TimeoutException($"{file}: tiempo de espera agotado.");
-        }
-        var output = stdout.GetAwaiter().GetResult();
-        var error = stderr.GetAwaiter().GetResult();
-        if (!string.IsNullOrWhiteSpace(output)) logs.Add(output.Trim());
-        if (proc.ExitCode != 0)
-            throw new InvalidOperationException($"{file} terminó con código {proc.ExitCode}: {error} {output}");
     }
 
     private void RecordHistory(string operationId, string actionType, bool success, double durationMs, string summary, string? error)

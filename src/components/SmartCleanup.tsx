@@ -2,13 +2,24 @@ import { useState, useRef, useEffect } from 'react';
 import { DEFAULT_NATIVE_ENGINE_URL } from '../services/nativeBridge';
 type Item = { id: string; category: string; path: string; bytes: number; kind: string; valueName: string | null; value: string | null };
 type Plan = { id: string; items: Item[]; warnings: string[] };
-type Receipt = { id: string; bytesQuarantined: number; errors: string[]; message: string; items: unknown[] };
+type Receipt = { id: string; bytesQuarantined: number; errors: string[]; message: string; items: unknown[]; action?:string; bytesDeleted?:number; createdUtc?:string };
 export function SmartCleanup({ connected, externalBusy = false, onBusyChange }: { connected: boolean; externalBusy?: boolean; onBusyChange?:(busy:boolean)=>void }) {
   const lock = useRef(false);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [restoreId, setRestoreId] = useState('');
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [receiptError, setReceiptError] = useState('');
+  async function refreshReceipts() {
+    try {
+      const r = await fetch(`${DEFAULT_NATIVE_ENGINE_URL}/api/cleanup/receipts`);
+      const rows = await r.json();
+      if (!r.ok || !Array.isArray(rows)) throw new Error('No se pudo consultar el inventario de cuarentenas. No se asume que esté vacío.');
+      setReceipts(rows); setReceiptError('');
+    } catch(e) { setReceiptError(e instanceof Error ? e.message : 'Inventario no disponible'); }
+  }
+  useEffect(() => { if (connected) void refreshReceipts(); else setReceipts([]); }, [connected]);
   const [busy, setBusy] = useState(false);
   useEffect(() => { onBusyChange?.(busy); }, [busy,onBusyChange]);
   const [error, setError] = useState('');
@@ -29,7 +40,7 @@ export function SmartCleanup({ connected, externalBusy = false, onBusyChange }: 
       else {
         const result = await request(kind === 'quarantine' ? kind : `${kind}/${restoreId}`, kind === 'quarantine'
           ? { planId: plan?.id, itemIds: selected } : kind === 'purge' ? { confirmation } : undefined);
-        setReceipt(result); setRestoreId(result.id); setPlan(null); setSelected([]);
+        setReceipt(result); setRestoreId(result.id); setPlan(null); setSelected([]); await refreshReceipts();
       }
     } catch (e) { setError(e instanceof Error ? e.message : 'Error de conexión'); }
     finally { lock.current = false; setBusy(false); }
@@ -53,12 +64,18 @@ export function SmartCleanup({ connected, externalBusy = false, onBusyChange }: 
       <button disabled={externalBusy || busy || !selected.length} className="rounded border border-amber-600 px-4 py-2 disabled:opacity-40" onClick={() => action('quarantine')}>Poner selección en cuarentena</button>
     </div>}
     <div className="rounded-xl border border-neutral-800 p-4 space-y-3">
+      <h2 className="font-bold">Cuarentenas guardadas en este equipo</h2>
+      <button disabled={!connected || busy || externalBusy} className="underline disabled:opacity-40" onClick={refreshReceipts}>Actualizar cuarentenas</button>
+      {receiptError && <p role="alert" className="text-amber-300 text-sm">{receiptError}</p>}
+      {!receiptError && connected && !receipts.some(r => r.items.length > 0) && <p className="text-sm text-neutral-400">Sin elementos pendientes en el inventario leído.</p>}
+      {receipts.filter(r => r.items.length > 0).map(r => <button key={r.id} disabled={busy || externalBusy} onClick={() => {setRestoreId(r.id);setReceipt(r);}} className="block text-left border border-neutral-700 rounded p-2 text-xs break-all">{r.id} · {r.items.length} pendientes · {(r.bytesQuarantined / 1048576).toFixed(2)} MB en cuarentena</button>)}
       <label className="block">ID de cuarentena para recuperar (también tras reiniciar)<input className="block w-full rounded bg-neutral-900 px-3 py-2 mt-2" value={restoreId} onChange={e => setRestoreId(e.target.value)} /></label>
       <div className="flex gap-3"><button disabled={externalBusy || busy || !connected || !restoreId} onClick={() => action('restore')} className="border rounded px-3 py-2 disabled:opacity-40">Restaurar sin sobrescribir</button>
         <button disabled={externalBusy || busy || !connected || !restoreId} onClick={() => action('purge')} className="border border-rose-800 rounded px-3 py-2 disabled:opacity-40">Purgar archivos definitivamente</button></div>
       <p className="text-xs text-neutral-400">Cuarentena mueve archivos, no libera espacio físico. La purga es irreversible; las copias del registro se conservan.</p>
     </div>
     {receipt && <div className="rounded border border-neutral-700 p-4 space-y-2"><p>{receipt.message}</p>
+      {receipt.action === 'purge' && <p>{receipt.bytesDeleted ?? 0} bytes lógicos eliminados en esta purga; no es una medición de espacio físico libre.</p>}
       <p>ID: {receipt.id} · {(receipt.bytesQuarantined / 1048576).toFixed(2)} MB aún en cuarentena · {receipt.errors.length} incidencias</p>
       {receipt.errors.map((e, i) => <p key={i} className="text-xs text-amber-300 break-all">{e}</p>)}
       <button className="underline" onClick={() => { const url = URL.createObjectURL(new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = 'evo-cleanup-receipt.json'; a.click(); URL.revokeObjectURL(url); }}>Guardar recibo e ID</button>

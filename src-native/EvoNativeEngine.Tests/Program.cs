@@ -188,6 +188,24 @@ if (OperatingSystem.IsWindows())
         Assert(refusedPurge, "Irreversible purge requires exact confirmation");
         var purged = await cleaner.PurgeAsync(quarantined.Id, "ELIMINAR DEFINITIVAMENTE");
         Assert(purged.Errors.Count == 0 && purged.BytesQuarantined == 0 && !File.Exists(file), "Purge real quarantined file");
+        Assert(purged.Action == "purge" && purged.BytesDeleted > 0, "Persist measured logical deletion, not fabricated disk free space");
+        await File.WriteAllTextAsync(file, "original-payload"); File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-10));
+        plan = await cleaner.ScanAsync(); candidate = plan.Items.Single(i => i.Path == file);
+        quarantined = await cleaner.QuarantineAsync(new(plan.Id, [candidate.Id]));
+        Assert(quarantined.Errors.Count == 0 && quarantined.Items.Single().Sha256 is not null, "Quarantine includes original SHA256 and verifies move");
+        var stored = quarantined.Items.Single().StoredPath!;
+        await File.WriteAllTextAsync(stored, "tampered-payload"); // Same length: size alone cannot certify identity.
+        restored = await cleaner.RestoreAsync(quarantined.Id);
+        Assert(restored.Errors.Count > 0 && restored.Items.Count == 1 && !File.Exists(file), "Tampered quarantine cannot be reported restored");
+        var refusedTampered = await cleaner.PurgeAsync(quarantined.Id, "ELIMINAR DEFINITIVAMENTE");
+        Assert(refusedTampered.Errors.Count > 0 && File.Exists(stored), "Tampered file and manifest retained for inspection");
+        await File.WriteAllTextAsync(stored, "original-payload");
+        await File.WriteAllTextAsync(file, "occupied");
+        restored = await cleaner.RestoreAsync(quarantined.Id);
+        Assert(restored.Items.Count == 1 && await File.ReadAllTextAsync(file) == "occupied", "Restore does not overwrite externally occupied original");
+        File.Delete(file);
+        restored = await cleaner.RestoreAsync(quarantined.Id);
+        Assert(restored.Action == "restore" && restored.Errors.Count == 0 && restored.Items.Count == 0 && await File.ReadAllTextAsync(file) == "original-payload", "Retry after conflict verifies exact content");
         Assert(SmartCleanupService.MissingLocalExecutable("rundll32.exe something.dll") is null, "Do not guess relative command or COM/DLL targets");
         Assert(SmartCleanupService.MissingLocalExecutable(@"\\server\share\absent.exe") is null, "Do not classify offline network programs as orphaned");
     }
@@ -323,6 +341,42 @@ var externallyConfigured = (await toggleService.SwitchStatesAsync()).Single(s =>
 Assert(!externallyConfigured.Checked && externallyConfigured.State == "configured", "Matching external settings are not owned or guessed reversible");
 Console.WriteLine("PASS: native template switches ON/OFF, exact restore, partial failure, retry and external configuration.");
 
+// Persisted inventory and global best-effort recovery use the production file-backed backup manager.
+var recoveryRoot = Path.Combine(Path.GetTempPath(), "evo-recovery-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(recoveryRoot);
+try
+{
+    var disk = new BackupManager(Microsoft.Extensions.Logging.Abstractions.NullLogger<BackupManager>.Instance, recoveryRoot);
+    var cleanRecovery = new SmartCleanupService(disk, new OperationJournal());
+    var recoveryOps = new FakeWorkflowOperations { FailRecovery = true };
+    var recoveryPackages = new FakeOptionalPackages();
+    var recoveryDebloat = new DebloatService(recoveryPackages, disk, new OperationJournal());
+    var recoveryPackagePlan = JsonSerializer.SerializeToElement(await recoveryDebloat.PreviewAsync()).GetProperty("Plan");
+    var removed = await recoveryDebloat.RemoveAsync(new(recoveryPackagePlan.GetProperty("Id").GetGuid(), ["Microsoft.BingNews"], "DESINSTALAR APLICACIONES"));
+    var globalRecovery = new RecoveryService(recoveryOps, cleanRecovery, recoveryDebloat, disk);
+    bool confirmationRefused = false;
+    try { await globalRecovery.RestoreAllAsync(new("incorrecta")); } catch (ArgumentException) { confirmationRefused = true; }
+    Assert(confirmationRefused, "Global recovery requires explicit confirmation before changes");
+    var globalResult = await globalRecovery.RestoreAllAsync(new("RESTAURAR TODO"));
+    Assert(!globalResult.Success && !globalResult.Restored, "Global failure never reported fully restored");
+    Assert((await recoveryPackages.ListAsync()).Any(p => p.Name == "Microsoft.BingNews"), "Global recovery continues Appx after operation failure");
+    recoveryOps.FailRecovery = false;
+    Assert((await globalRecovery.RestoreAllAsync(new("RESTAURAR TODO"))).Success, "Global retry succeeds for remaining operations");
+    for (int n = 0; n < 105; n++)
+    {
+        var id = Guid.NewGuid();
+        await disk.SaveStateAsync("cleanup." + id.ToString("N"), new CleanupReceipt(id, DateTime.UtcNow, [], 0, [], "fixture"));
+    }
+    var reopened = new BackupManager(Microsoft.Extensions.Logging.Abstractions.NullLogger<BackupManager>.Instance, recoveryRoot);
+    Assert((await new SmartCleanupService(reopened, new OperationJournal()).ReceiptsAsync()).Length == 105, "Inventory persists across service restart with no latest-100 truncation");
+    var corruptId = Guid.NewGuid();
+    await File.WriteAllTextAsync(Path.Combine(recoveryRoot, "state_cleanup_" + corruptId.ToString("N") + "_latest.json"), "{broken");
+    Assert(!(await globalRecovery.RestoreAllAsync(new("RESTAURAR TODO"))).Success, "Unreadable inventory does not become empty successful recovery");
+    Assert(!Directory.EnumerateFiles(recoveryRoot, "*.tmp").Any(), "Atomic backup writes leave no temporary snapshots");
+}
+finally { Directory.Delete(recoveryRoot, true); }
+Console.WriteLine("PASS: global confirmation, partial failure, continued recovery, persistent untruncated inventory and corrupt-backup honesty.");
+
 sealed class FakePower : IPowerSettings
 {
     public Guid Active = Guid.NewGuid();
@@ -407,6 +461,7 @@ sealed class FakeOptionalApplications : IOptionalApplications
 }
 sealed class FakeWorkflowOperations : IOptimizationService
 {
+    public bool FailRecovery;
     public LibraryOptimizationService? Library;
     public MemoryBackups? Store;
     public Func<string,Task>? OnRestore;
@@ -417,7 +472,7 @@ sealed class FakeWorkflowOperations : IOptimizationService
         if (Library is not null && OptimizationLibrary.Definitions.ContainsKey(id)) return await Library.ExecuteAsync(id,true);
         return new(true,id,"restore",DateTime.UtcNow,0,[],null,null,null,true);
     }
-    public Task<OperationResult> RestoreVerifiedAsync() => RestoreOperationAsync("all");
+    public Task<OperationResult> RestoreVerifiedAsync() => FailRecovery ? Task.FromResult(new OperationResult(false,"all","restore",DateTime.UtcNow,0,["Fixture readback failure"],null,null,"Readback failure",false)) : RestoreOperationAsync("all");
     public Task<IReadOnlyList<OperationCatalogItem>> GetCatalogAsync() => Task.FromResult<IReadOnlyList<OperationCatalogItem>>([]);
     public Task<IReadOnlyList<OperationHistoryItem>> GetHistoryAsync() => Task.FromResult<IReadOnlyList<OperationHistoryItem>>([]);
     public Task<OperationStatusResponse> GetOperationStatusAsync(string id) => Task.FromResult(new OperationStatusResponse(id,true,true,Store?.HasBackup(LibraryOptimizationService.BackupKey(id)) ?? false,null,new Cs2ProcessState(true,123,"Normal",10,100,DateTime.UtcNow,"test"),null));

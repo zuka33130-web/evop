@@ -3,12 +3,14 @@ import { ArrowUpRight, SlidersHorizontal } from 'lucide-react';
 import { operationGuide } from '../services/operationGuide';
 import { DEFAULT_NATIVE_ENGINE_URL, fetchOperationStatus, type OperationCatalogItem, type OperationResult, type OperationStatusResponse } from '../services/nativeBridge';
 
-export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog, apply, restore, onMeasure }: {
+export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog, apply, restore, onMeasure, onBusyChange }: {
+  onBusyChange?: (busy:boolean) => void;
   onMeasure?: () => void;
   connected: boolean; elevated: boolean; globalBusy: boolean; catalog: OperationCatalogItem[];
   apply: (id: string) => Promise<OperationResult>; restore: (id: string) => Promise<OperationResult>;
 }) {
   const [busy, setBusy] = useState(false);
+  useEffect(() => { onBusyChange?.(busy); }, [busy,onBusyChange]);
   const [result, setResult] = useState<OperationResult | null>(null);
   const [error, setError] = useState('');
   const lock = useRef(false);
@@ -36,21 +38,22 @@ export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog
   }, [connected, catalog, refresh]);
   async function execute(item: OperationCatalogItem, revert: boolean) {
     if (!item.isReadOnly && !window.confirm(`${revert ? 'Restaurar' : 'Aplicar'}: ${item.name}\n${item.description}\n${item.confirmationMessage || ''}\nEsto puede modificar Windows. No garantiza más FPS.`)) return;
-    if (lock.current) return;
+    if (lock.current || globalBusy || !connected) return;
     lock.current = true;
     setBusy(true); setError('');
     try { setResult(await (revert ? restore : apply)(item.id)); }
     catch (e) { setError(e instanceof Error ? e.message : 'Error de conexión'); }
     finally { lock.current = false; setBusy(false); setRefresh(v => v + 1); }
   }
-  async function recover(expired: boolean) {
-    if (!confirm(expired ? 'Solo se archivará el respaldo de CS2 si el motor puede verificar que la instancia original terminó. No se modificará la nueva instancia. ¿Continuar?'
+  async function recover(expired: boolean, all = false) {
+    if (all && prompt("Restaura módulos, cuarentenas y apps recuperables. No recupera procesos cerrados, archivos purgados ni datos Appx eliminados. Escribe RESTAURAR TODO") !== "RESTAURAR TODO") return;
+    if (!all && !confirm(expired ? 'Solo se archivará el respaldo de CS2 si el motor puede verificar que la instancia original terminó. No se modificará la nueva instancia. ¿Continuar?'
       : 'Restaurar todos los módulos con respaldos verificados. No incluye snapshots heredados ni archivos purgados; puede requerir administrador. ¿Continuar?')) return;
-    if (lock.current) return;
+    if (lock.current || globalBusy || !connected) return;
     lock.current = true;
     setBusy(true); setError('');
     try {
-      const response = await fetch(`${DEFAULT_NATIVE_ENGINE_URL}/api/recovery/${expired ? 'cs2-expired' : 'verified'}`, { method: 'POST' });
+      const response = await fetch(`${DEFAULT_NATIVE_ENGINE_URL}/api/recovery/${expired ? 'cs2-expired' : all ? 'all' : 'verified'}`, { method: 'POST', ...(all ? { headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ confirmation: 'RESTAURAR TODO' }) } : {}) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Falló la recuperación');
       if (expired) { setResult(null); setError(data.message); } else setResult(data);
@@ -77,6 +80,7 @@ export function NativeOperationsPanel({ connected, elevated, globalBusy, catalog
     <details className="instrument-card space-y-3"><summary className="text-xs font-semibold">Recuperación y respaldos</summary><h2 className="font-bold">Recuperación</h2>
       <p className="text-xs text-neutral-400">Solo se usan respaldos verificados. La restauración puede ser parcial si faltan permisos o el juego cerró; se muestran los pasos fallidos.</p>
       <div className="flex flex-wrap gap-3"><button disabled={!connected || busy || globalBusy || loading} className="border rounded px-3 py-2 disabled:opacity-30" onClick={() => recover(false)}>Restaurar módulos con respaldo</button>
+      <button disabled={!connected || busy || globalBusy || loading} className="border border-amber-700 rounded px-3 py-2 disabled:opacity-30" onClick={() => recover(false, true)}>Recuperación global: módulos, cuarentenas y apps</button>
       {states['gaming.cs2.priority']?.hasBackup && <button disabled={!connected || busy || globalBusy} className="border rounded px-3 py-2 disabled:opacity-30" onClick={() => recover(true)}>Archivar respaldo de CS2 terminado</button>}</div>
     </details>
     {result && <div role="status" className="rounded-xl border border-neutral-700 p-4">

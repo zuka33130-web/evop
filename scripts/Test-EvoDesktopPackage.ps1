@@ -34,6 +34,13 @@ try {
     if ($frontend.Content -notmatch 'id="root"' -or -not $frontend.Headers['Content-Security-Policy']) { throw 'Frontend/CSP no publicados correctamente.' }
     $catalog = Invoke-RestMethod "$base/api/operations" -Headers $headers
     if ($catalog.Count -lt 1) { throw 'Catálogo vacío.' }
+    # Resolve recovery/cleanup DI without applying system changes.
+    Invoke-WebRequest "$base/api/cleanup/receipts" -Headers $headers | Out-Null
+    $refusedRecovery = Invoke-WebRequest "$base/api/recovery/all" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"confirmation":"INVALID"}' -SkipHttpErrorCheck
+    if ($refusedRecovery.StatusCode -ne 400) { throw 'Recuperación global no exige confirmación.' }
+    $refusedClean = Invoke-WebRequest "$base/api/clean/apply" -Method Post -Headers $headers -SkipHttpErrorCheck
+    if ($refusedClean.StatusCode -ne 400) { throw 'La limpieza heredada sin selección no está bloqueada.' }
+    if (Test-Path (Join-Path $PackageDir 'engine/Scripts/Invoke-EvoClean.ps1')) { throw 'Se publicó un script de borrado heredado.' }
     # Verify new experiment service DI can be resolved without running an optimization.
     Invoke-WebRequest "$base/api/benchmarks/experiments/active" -Headers $headers | Out-Null
     Invoke-RestMethod "$base/api/desktop/shutdown" -Method Post -Headers $headers | Out-Null

@@ -22,7 +22,7 @@ test.beforeEach(async ({ page }) => {
     else if (path === '/api/operations/history') data = [];
     else if (path === '/api/library') data = [libraryFixture];
     else if (path === '/api/templates') data = [templateFixture];
-    else if (path === '/api/templates/receipts') data = [];
+    else if (path === '/api/templates/receipts' || path === '/api/cleanup/receipts') data = [];
     else if (path === '/api/templates/states') data = [{templateId:'gaming',checked:false,state:'inactive',atTarget:0,total:1,receiptIds:[],message:'Sin cambios propios pendientes.'}];
     else if (path === '/api/templates/gaming/preview') data = { template:templateFixture, note:'Revisar antes de aplicar.', items:[{ definition:libraryFixture, available:true, hasBackup:false, current:{exists:false} }] };
     else if (path === '/api/beast/preview') data = { id:'beast-plan', expiresUtc:new Date(Date.now()+120000).toISOString(), candidates:[{pid:42,name:'chrome',path:'C:/Apps/chrome.exe',workingSetMb:200}], protected:['Steam y anticheat'], warning:'Nada se cierra por defecto.' };
@@ -199,4 +199,42 @@ test('partial restore leaves template slider on for recovery',async ({page})=>{
   await expect(slider).toBeChecked();page.on('dialog',dialog=>dialog.accept());await slider.click();
   await expect(page.getByRole('alert')).toContainText('Restauración parcial');
   await expect(slider).toBeChecked();await expect(slider).toBeEnabled();
+});
+
+test('global recovery requires typed consent and reports partial native outcomes', async ({ page }) => {
+  let requests = 0;
+  await page.route('**/api/recovery/all', async route => {
+    requests++;
+    expect(route.request().postDataJSON()).toEqual({ confirmation:'RESTAURAR TODO' });
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    await route.fulfill({json:{success:false,operationId:'recovery.all',logs:['[PENDIENTE] cleanup: integridad no verificada; respaldo conservado.'],errorMessage:'Recuperación parcial',restored:false}});
+  });
+  await page.getByRole('navigation').getByRole('button', { name:/Operaciones Windows/ }).click();
+  await page.getByText('Recuperación y respaldos', {exact:true}).click();
+  page.once('dialog', d => d.accept('incorrecta'));
+  await page.getByRole('button', {name:/Recuperación global:/}).click();
+  expect(requests).toBe(0);
+  page.once('dialog', d => d.accept('RESTAURAR TODO'));
+  await page.getByRole('button', {name:/Recuperación global:/}).click();
+  await expect(page.getByRole('button', {name:/Recuperación global:/})).toBeDisabled();
+  await page.getByRole('navigation').getByRole('button', {name:/Limpieza inteligente/}).click();
+  await expect(page.getByRole('button', {name:'Escanear sin modificar'})).toBeDisabled();
+  await page.getByRole('navigation').getByRole('button', {name:/Operaciones Windows/}).click();
+  await expect(page.getByText('Recuperación parcial', {exact:true})).toBeVisible();
+  await expect(page.getByText(/\[PENDIENTE\] cleanup/)).toBeVisible();
+  expect(requests).toBe(1);
+});
+
+test('cleanup reloads persisted receipts and does not confuse quarantine with space freed', async ({ page }) => {
+  const id='a1234567-1234-1234-1234-123456789012';
+  await page.route('**/api/cleanup/receipts', route => route.fulfill({json:[{id,items:[{}],bytesQuarantined:1048576,errors:[],message:'Cuarentena recuperable, no espacio libre ganado.'}]}));
+  await page.reload();
+  await page.getByRole('navigation').getByRole('button', {name:/Limpieza inteligente/}).click();
+  await page.getByRole('button', {name:new RegExp(id)}).click();
+  await expect(page.getByRole('textbox')).toHaveValue(id);
+  await expect(page.getByText('Cuarentena recuperable, no espacio libre ganado.', {exact:true})).toBeVisible();
+  await page.route(`**/api/cleanup/restore/${id}`, route => route.fulfill({json:{id,items:[{}],bytesQuarantined:1048576,errors:['Integridad no verificada; manifiesto conservado.'],message:'Restauración parcial',action:'restore'}}));
+  await page.getByRole('button', {name:'Restaurar sin sobrescribir'}).click();
+  await expect(page.getByText('Restauración parcial', {exact:true})).toBeVisible();
+  await expect(page.getByText('Integridad no verificada; manifiesto conservado.', {exact:true})).toBeVisible();
 });

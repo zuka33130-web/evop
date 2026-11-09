@@ -55,6 +55,7 @@ builder.Services.AddSingleton<IOptionalApplications, WindowsOptionalApplications
 builder.Services.AddSingleton<BeastSessionService>();
 builder.Services.AddSingleton<IOptionalPackages, WindowsOptionalPackages>();
 builder.Services.AddSingleton<DebloatService>();
+builder.Services.AddSingleton<RecoveryService>();
 
 // CORS: Permitir exclusivamente solicitudes de clientes locales (Vite dev server, Tauri, etc.)
 builder.Services.AddCors(options =>
@@ -95,6 +96,18 @@ app.Use(async (context, next) =>
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'";
     await next();
 });
+// Serialize mutating HTTP workflows as a whole, not only individual registry writes.
+// This prevents a global restore racing a template, Appx removal or quarantine request.
+using var mutationRequests = new SemaphoreSlim(1, 1);
+app.Use(async (context, next) =>
+{
+    if (!HttpMethods.IsPost(context.Request.Method) || !context.Request.Path.StartsWithSegments("/api"))
+    { await next(); return; }
+    await mutationRequests.WaitAsync(context.RequestAborted);
+    try { await next(); }
+    finally { mutationRequests.Release(); }
+});
+
 if (hasFrontend)
 {
     var provider = new PhysicalFileProvider(frontendDirectory);
@@ -241,25 +254,25 @@ app.MapGet("/api/telemetry/realtime", async (IOptimizationService ops) =>
 app.MapGet("/api/clean/scan", async (IEvoCleanService cleanService) =>
 {
     var result = await cleanService.RunCleanAsync("Scan");
-    return Results.Ok(result);
+    return result.Status == "success" ? Results.Ok(result) : Results.BadRequest(result);
 });
 
 app.MapPost("/api/clean/scan", async (IEvoCleanService cleanService) =>
 {
     var result = await cleanService.RunCleanAsync("Scan");
-    return Results.Ok(result);
+    return result.Status == "success" ? Results.Ok(result) : Results.BadRequest(result);
 });
 
 app.MapPost("/api/clean/execute", async (IEvoCleanService cleanService) =>
 {
     var result = await cleanService.RunCleanAsync("Clean");
-    return Results.Ok(result);
+    return result.Status == "success" ? Results.Ok(result) : Results.BadRequest(result);
 });
 
 app.MapPost("/api/clean/apply", async (IEvoCleanService cleanService) =>
 {
     var result = await cleanService.RunCleanAsync("Clean");
-    return Results.Ok(result);
+    return result.Status == "success" ? Results.Ok(result) : Results.BadRequest(result);
 });
 
 app.MapGet("/api/benchmarks/runs", (BenchmarkSessionService sessions) => Results.Ok(sessions.List()));
@@ -325,6 +338,16 @@ app.MapPost("/api/desktop/shutdown", (IHostApplicationLifetime lifetime) =>
     return Results.Ok(new { stopping = true });
 });
 
+app.MapGet("/api/cleanup/receipts", async (SmartCleanupService cleanup) =>
+{
+    try { return Results.Ok(await cleanup.ReceiptsAsync()); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/recovery/all", async (GlobalRecoveryRequest request, RecoveryService recovery) =>
+{
+    try { return Results.Ok(await recovery.RestoreAllAsync(request)); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
 app.MapPost("/api/cleanup/preview", async (SmartCleanupService cleanup) =>
 {
     try { return Results.Ok(await cleanup.ScanAsync()); }

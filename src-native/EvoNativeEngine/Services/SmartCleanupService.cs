@@ -1,6 +1,7 @@
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace EvoNativeEngine.Services;
 
@@ -8,9 +9,9 @@ public sealed record CleanupItem(Guid Id, string Category, string Path, long Byt
     string Kind = "File", string? ValueName = null, string? Value = null, int ValueKind = 0);
 public sealed record CleanupPlan(Guid Id, DateTime CreatedUtc, List<CleanupItem> Items, List<string> Warnings);
 public sealed record CleanupSelection(Guid PlanId, Guid[] ItemIds);
-public sealed record QuarantinedItem(CleanupItem Original, string? StoredPath);
+public sealed record QuarantinedItem(CleanupItem Original, string? StoredPath, string? Sha256 = null);
 public sealed record CleanupReceipt(Guid Id, DateTime CreatedUtc, List<QuarantinedItem> Items, long BytesQuarantined,
-    List<string> Errors, string Message);
+    List<string> Errors, string Message, string Action = "quarantine", long BytesDeleted = 0);
 
 /// <summary>Allowlisted preview, revalidation and recoverable quarantine, never generic registry sweeping.</summary>
 public sealed class SmartCleanupService(IBackupManager backups, OperationJournal journal, Dictionary<string, string>? testRoots = null)
@@ -123,6 +124,18 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
         catch { return null; } // Access denied is not evidence of an orphan.
         return path;
     }
+    public Task<CleanupReceipt[]> ReceiptsAsync() => WorkflowReceipts.ReadAsync<CleanupReceipt>(backups, "cleanup", r => r.Id, int.MaxValue);
+    private static string Digest(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+    private static void VerifyFile(string path, QuarantinedItem item)
+    {
+        // Legacy receipts without hashes remain recoverable only by manual inspection.
+        if (item.Sha256 is null || new FileInfo(path).Length != item.Original.Bytes || Digest(path) != item.Sha256)
+            throw new IOException("Integridad no verificada; archivo y manifiesto conservados para revisión manual.");
+    }
     public async Task<CleanupReceipt> QuarantineAsync(CleanupSelection selection)
     {
         await gate.WaitAsync();
@@ -162,9 +175,12 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
                         using var stream = new FileStream(item.Path, FileMode.Open, FileAccess.Read, FileShare.Delete);
                         target = Path.Combine(directory, item.Id.ToString("N") + ".bin");
                         if (!SafePath(StateDir, target)) throw new IOException("Cuarentena no segura.");
-                        staged.Add(new(item, target));
+                        var hash = Convert.ToHexString(SHA256.HashData(stream));
+                        staged.Add(new(item, target, hash));
                         await Save(id, staged, errors);
                         File.Move(item.Path, target); // No overwrite, cross-volume or locked-file fallback deletion.
+                        stream.Dispose();
+                        VerifyFile(target, staged[^1]);
                     }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -176,10 +192,12 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
         finally { gate.Release(); }
     }
     private Task<CleanupReceipt> Save(Guid id, List<QuarantinedItem> items, List<string> errors) => SaveCore(id, items, errors);
-    private async Task<CleanupReceipt> SaveCore(Guid id, List<QuarantinedItem> items, List<string> errors)
+    private async Task<CleanupReceipt> SaveCore(Guid id, List<QuarantinedItem> items, List<string> errors, string action = "quarantine", long deleted = 0)
     {
         var bytes = items.Where(i => i.StoredPath is not null && File.Exists(i.StoredPath)).Sum(i => i.Original.Bytes);
-        var receipt = new CleanupReceipt(id, DateTime.UtcNow, items.ToList(), bytes, errors.ToList(), "Cuarentena recuperable; no equivale a espacio libre ganado. Conservar el ID para restaurar.");
+        var receipt = new CleanupReceipt(id, DateTime.UtcNow, items.ToList(), bytes, errors.ToList(), action == "restore" ? (items.Count == 0 ? "Restauración verificada: sin elementos pendientes." : "Restauración parcial: respaldos pendientes conservados.")
+                : action == "purge" ? $"Eliminados definitivamente {deleted} bytes lógicos; registro recuperable conservado. No equivale a espacio físico medido."
+                : "Cuarentena recuperable; no equivale a espacio libre ganado. Conservar el ID para restaurar.", action, deleted);
         await backups.SaveStateAsync("cleanup." + id.ToString("N"), receipt);
         return receipt;
     }
@@ -189,6 +207,7 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
         try
         {
             var receipt = await backups.GetLastStateAsync<CleanupReceipt>("cleanup." + id.ToString("N")) ?? throw new ArgumentException("No hay manifiesto de cuarentena.");
+            if (receipt.Id != id) throw new IOException("Identidad del manifiesto inválida.");
             var errors = new List<string>(); var remaining = new List<QuarantinedItem>();
             journal.Touch();
             foreach (var item in receipt.Items)
@@ -211,17 +230,19 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
                         if (!AllowedRoots.TryGetValue(original.Category, out var root) || !SafePath(root, original.Path) || item.StoredPath is null || Path.GetFullPath(item.StoredPath) != Path.Combine(StateDir, id.ToString("N"), original.Id.ToString("N") + ".bin") || !SafePath(StateDir, item.StoredPath)) throw new IOException("Ruta fuera de los límites permitidos.");
                         if (File.Exists(item.StoredPath))
                         {
+                            VerifyFile(item.StoredPath, item);
                             if (File.Exists(original.Path)) throw new IOException("Destino ocupado; no se sobrescribe.");
                             Directory.CreateDirectory(Path.GetDirectoryName(original.Path)!);
                             File.Move(item.StoredPath, original.Path);
                         }
                         else if (!File.Exists(original.Path)) throw new IOException("No se encuentra original ni cuarentena.");
+                        VerifyFile(original.Path, item);
                     }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
                 { remaining.Add(item); errors.Add(item.Original.Path + ": " + ex.Message); }
             }
-            return await Save(id, remaining, errors);
+            return await SaveCore(id, remaining, errors, "restore");
         }
         finally { gate.Release(); }
     }
@@ -232,6 +253,7 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
         try
         {
             var receipt = await backups.GetLastStateAsync<CleanupReceipt>("cleanup." + id.ToString("N")) ?? throw new ArgumentException("Cuarentena desconocida.");
+            if (receipt.Id != id) throw new IOException("Identidad del manifiesto inválida.");
             var remaining = new List<QuarantinedItem>(); var errors = new List<string>(); long deleted = 0;
             journal.Touch();
             foreach (var item in receipt.Items)
@@ -241,8 +263,10 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
                 {
                     var expected = Path.Combine(StateDir, id.ToString("N"), item.Original.Id.ToString("N") + ".bin");
                     if (item.StoredPath is null || Path.GetFullPath(item.StoredPath) != expected || !SafePath(StateDir, expected)) throw new IOException("Ruta de cuarentena no válida.");
+                    if (!File.Exists(expected)) throw new IOException("Archivo de cuarentena ausente; manifiesto conservado para revisión.");
                     if (File.Exists(expected))
                     {
+                        VerifyFile(expected, item);
                         var length = new FileInfo(expected).Length;
                         File.Delete(expected);
                         if (File.Exists(expected)) throw new IOException("No se verificó el borrado.");
@@ -252,8 +276,7 @@ public sealed class SmartCleanupService(IBackupManager backups, OperationJournal
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 { remaining.Add(item); errors.Add(item.Original.Path + ": " + ex.Message); }
             }
-            var updated = await Save(id, remaining, errors);
-            return updated with { Message = $"Eliminados definitivamente {deleted} bytes lógicos de cuarentena. La liberación física puede variar por compresión/enlaces. Registro recuperable conservado." };
+            return await SaveCore(id, remaining, errors, "purge", deleted);
         }
         finally { gate.Release(); }
     }

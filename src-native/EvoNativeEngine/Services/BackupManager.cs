@@ -24,10 +24,10 @@ public class BackupManager : IBackupManager
 
     public string BackupDirectory => _backupDir;
 
-    public BackupManager(ILogger<BackupManager> logger)
+    public BackupManager(ILogger<BackupManager> logger, string? backupDirectoryOverride = null)
     {
         _logger = logger;
-        _backupDir = Path.Combine(
+        _backupDir = backupDirectoryOverride ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "EvoOptimizer",
             "Backups"
@@ -84,7 +84,13 @@ public class BackupManager : IBackupManager
         string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            await File.WriteAllTextAsync(temporary, json);
+            await using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                4096, FileOptions.WriteThrough))
+            {
+                await file.WriteAsync(System.Text.Encoding.UTF8.GetBytes(json));
+                await file.FlushAsync();
+                file.Flush(flushToDisk: true);
+            }
             File.Move(temporary, path, overwrite: true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
