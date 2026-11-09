@@ -238,3 +238,55 @@ test('cleanup reloads persisted receipts and does not confuse quarantine with sp
   await expect(page.getByText('Restauración parcial', {exact:true})).toBeVisible();
   await expect(page.getByText('Integridad no verificada; manifiesto conservado.', {exact:true})).toBeVisible();
 });
+
+test('EvoClean category selection is explicit and displays observed bytes and omissions', async ({ page }) => {
+  await page.route('**/api/cleanup/preview', r=>r.fulfill({json:{id:'category-plan',complete:false,cancelled:false,logicalBytes:3072,allocatedBytes:8192,warnings:['Solo inventario observado.'],outcomes:[{path:'C:/Temp/locked.tmp',category:'Temporales',status:'skipped',reason:'Archivo en uso'}],items:[
+    {id:'tmp1',category:'Temporales',path:'C:/Temp/one.tmp',bytes:1024,kind:'File'},
+    {id:'thumb1',category:'Miniaturas',path:'C:/Cache/thumbcache.db',bytes:2048,kind:'File'}
+  ]}}));
+  let selection:unknown;
+  await page.route('**/api/cleanup/quarantine', async r=>{
+    selection=r.request().postDataJSON();
+    await r.fulfill({json:{id:'receipt-category',items:[{}],bytesQuarantined:1024,errors:[],message:'Cuarentena verificada',status:'completed',outcomes:[{path:'C:/Temp/one.tmp',category:'Temporales',status:'quarantined',reason:'Verificado',bytes:1024}]}});
+  });
+  await page.getByRole('navigation').getByRole('button',{name:/Limpieza inteligente/}).click();
+  await page.getByRole('button',{name:'Escanear sin modificar'}).click();
+  await expect(page.getByRole('checkbox').first()).not.toBeChecked();
+  await expect(page.getByText(/Inventario parcial/)).toBeVisible();
+  await expect(page.getByText(/3072 bytes lógicos analizados/)).toBeVisible();
+  const group=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Temporales',exact:true})});
+  await group.getByRole('button',{name:/Seleccionar categoría/}).click();
+  await expect(page.getByRole('combobox',{name:'Categoría de limpieza'})).toHaveValue('Temporales');
+  await expect(page.getByRole('checkbox')).toHaveCount(1);
+  await expect(page.getByRole('checkbox')).toBeChecked();
+  page.once('dialog', d=>d.accept());
+  await page.getByRole('button',{name:'Poner selección en cuarentena'}).click();
+  await expect(page.getByText('Cuarentena verificada',{exact:true})).toBeVisible();
+  expect(selection).toEqual({planId:'category-plan',itemIds:['tmp1']});
+});
+
+test('EvoClean cancellation waits for native receipt and shows real volume deltas', async ({ page }) => {
+  let release:()=>void=()=>{};
+  let cancels=0;
+  await page.route('**/api/cleanup/preview',async r=>{
+    await new Promise<void>(resolve=>{release=resolve;});
+    await r.fulfill({json:{id:'cancel-plan',items:[],warnings:[],complete:false,cancelled:true,logicalBytes:0,outcomes:[]}});
+  });
+  await page.route('**/api/cleanup/progress',r=>r.fulfill({json:{action:'scan',processed:3,total:0,cancelRequested:false}}));
+  await page.route('**/api/cleanup/cancel',async r=>{cancels++;await r.fulfill({json:{accepted:true}});release();});
+  await page.getByRole('navigation').getByRole('button',{name:/Limpieza inteligente/}).click();
+  await page.getByRole('button',{name:'Escanear sin modificar'}).click();
+  await expect(page.getByRole('button',{name:'Cancelar de forma segura'})).toBeVisible();
+  await page.getByRole('button',{name:'Cancelar de forma segura'}).click();
+  await expect(page.getByText('Inventario parcial por cancelación. Solo se cuentan archivos realmente analizados.')).toBeVisible();
+  expect(cancels).toBe(1);
+  const id='b1234567-1234-1234-1234-123456789012';
+  await page.route('**/api/cleanup/receipts',r=>r.fulfill({json:[{id,items:[{}],bytesQuarantined:1,errors:[],message:'Recibo guardado'}]}));
+  await page.getByRole('button',{name:'Actualizar cuarentenas'}).click();
+  await page.getByRole('button',{name:new RegExp(id)}).click();
+  await page.route(`**/api/cleanup/purge/${id}`,r=>r.fulfill({json:{id,items:[],bytesQuarantined:0,errors:[],message:'Purga verificada',action:'purge',bytesDeleted:4096,volumes:[{volume:'C:',freeBefore:10000,freeAfter:9590,observedFreeDelta:-410,note:'Delta incluye actividad ajena; no se atribuye íntegramente a EvoClean.'}]}}));
+  page.once('dialog', d=>d.accept('ELIMINAR DEFINITIVAMENTE'));
+  await page.getByRole('button',{name:'Purgar archivos definitivamente'}).click();
+  await expect(page.getByText(/delta neto observado -410 bytes/)).toBeVisible();
+  await expect(page.getByText(/4096 bytes lógicos eliminados en esta purga/)).toBeVisible();
+});

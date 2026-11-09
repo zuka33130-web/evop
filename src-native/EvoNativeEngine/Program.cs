@@ -101,7 +101,7 @@ app.Use(async (context, next) =>
 using var mutationRequests = new SemaphoreSlim(1, 1);
 app.Use(async (context, next) =>
 {
-    if (!HttpMethods.IsPost(context.Request.Method) || !context.Request.Path.StartsWithSegments("/api"))
+    if (!HttpMethods.IsPost(context.Request.Method) || !context.Request.Path.StartsWithSegments("/api") || context.Request.Path == "/api/cleanup/cancel")
     { await next(); return; }
     await mutationRequests.WaitAsync(context.RequestAborted);
     try { await next(); }
@@ -338,6 +338,9 @@ app.MapPost("/api/desktop/shutdown", (IHostApplicationLifetime lifetime) =>
     return Results.Ok(new { stopping = true });
 });
 
+// Cancellation must bypass the mutation request semaphore; otherwise it queues behind the work to stop.
+app.MapPost("/api/cleanup/cancel", (SmartCleanupService cleanup) => Results.Ok(new { accepted = cleanup.RequestCancellation() }));
+app.MapGet("/api/cleanup/progress", (SmartCleanupService cleanup) => Results.Ok(cleanup.Progress));
 app.MapGet("/api/cleanup/receipts", async (SmartCleanupService cleanup) =>
 {
     try { return Results.Ok(await cleanup.ReceiptsAsync()); }

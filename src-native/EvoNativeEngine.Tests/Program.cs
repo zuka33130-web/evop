@@ -211,6 +211,103 @@ if (OperatingSystem.IsWindows())
     }
     finally { Directory.Delete(root, true); }
 }
+// Real Windows filesystem acceptance fixtures: no mock filesystem and no deletion in user directories.
+if (OperatingSystem.IsWindows())
+{
+    var cleanFixture = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EvoOptimizer", "CleanAcceptance-" + Guid.NewGuid().ToString("N"));
+    var tempRoot = Path.Combine(cleanFixture, "temp"); var thumbnailRoot = Path.Combine(cleanFixture, "thumbnails");
+    var recycleRoot = Path.Combine(cleanFixture, "recycle"); var personalRoot = Path.Combine(cleanFixture, "personal");
+    foreach (var directory in new[] { tempRoot, thumbnailRoot, recycleRoot, personalRoot }) Directory.CreateDirectory(directory);
+    async Task<string> Old(string directory, string name, string content)
+    {
+        var path = Path.Combine(directory, name); await File.WriteAllTextAsync(path, content);
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddDays(-10)); return path;
+    }
+    var readOnly = "";
+    try
+    {
+        var exact = await Old(tempRoot, "exact.tmp", "known recoverable bytes");
+        var locked = await Old(tempRoot, "locked.tmp", "must not delete");
+        readOnly = await Old(tempRoot, "readonly.tmp", "protected"); File.SetAttributes(readOnly, FileAttributes.ReadOnly);
+        var recent = Path.Combine(tempRoot, "recent.tmp"); await File.WriteAllTextAsync(recent, "recent");
+        var thumbnail = await Old(thumbnailRoot, "thumbcache_fixture.db", "thumbnail payload");
+        var notThumbnail = await Old(thumbnailRoot, "personal.docx", "never selected by thumbnail scanner");
+        var personal = await Old(personalRoot, "family.jpg", "never scanned");
+        var recyclePayload = await Old(recycleRoot, "$Rfixture.tmp", "recycled-payload");
+        var recycleMetadata = await Old(recycleRoot, "$Ifixture.tmp", "recycle-metadata-fixture");
+        var large = Path.Combine(tempRoot, "large.tmp");
+        using (var big = new FileStream(large, FileMode.CreateNew, FileAccess.Write)) { big.SetLength(70L * 1024 * 1024); }
+        File.SetLastWriteTimeUtc(large, DateTime.UtcNow.AddDays(-10));
+        var store = new MemoryBackups();
+        var service = new SmartCleanupService(store, new OperationJournal(), new() {
+            ["Temporales de usuario"] = tempRoot, ["Miniaturas de usuario"] = thumbnailRoot,
+            ["Papelera de usuario · fixture"] = recycleRoot });
+        CleanupPlan scan;
+        using (var busyFile = new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            scan = await service.ScanAsync();
+            Assert(!scan.Items.Any(i => i.Path == locked), "Real sharing violation excludes a file in use");
+            Assert(scan.Outcomes!.Any(o => o.Path == locked && o.Status == "skipped"), "Locked-file reason is not silently discarded");
+        }
+        Assert(scan.Items.Any(i => i.Path == large && i.Bytes == 70L * 1024 * 1024), "Analysis includes large files, no historical 64MB estimate/cap");
+        Assert(!scan.Items.Any(i => i.Path == personal || i.Path == notThumbnail || i.Path == recent || i.Path == readOnly), "Personal/outside-category/recent/read-only files protected");
+        var recycled = scan.Items.Single(i => i.Path == recyclePayload);
+        Assert(recycled.Companion?.Path == recycleMetadata, "Recycle payload is inseparable from its user metadata in selection");
+        Assert(scan.LogicalBytes == scan.Items.Where(i => i.Kind == "File").Sum(i => i.Bytes + (i.Companion?.Bytes ?? 0)), "Exact observed logical sum including recycle metadata");
+        Assert(scan.Items.Where(i => i.Kind == "File").All(i => i.FileIdentity is not null && i.ScannedSha256 is not null && i.AllocatedBytes.HasValue), "Real handle identity, SHA256 and Windows allocation for every candidate");
+        var recycleReceipt = await service.QuarantineAsync(new(scan.Id, [recycled.Id]));
+        Assert(recycleReceipt.Errors.Count == 0 && !File.Exists(recyclePayload) && !File.Exists(recycleMetadata) && recycleReceipt.Items.Count == 2, "Actually quarantine both recycle files, not just Shell display");
+        var recovered = await service.RestoreAsync(recycleReceipt.Id);
+        Assert(recovered.Errors.Count == 0 && await File.ReadAllTextAsync(recyclePayload) == "recycled-payload" && await File.ReadAllTextAsync(recycleMetadata) == "recycle-metadata-fixture", "Actually restore recycle payload and metadata");
+        scan = await service.ScanAsync();
+        var originalCandidate = scan.Items.Single(i => i.Path == exact);
+        var previousTime = File.GetLastWriteTimeUtc(exact);
+        await File.WriteAllTextAsync(exact, new string('x', (int)originalCandidate.Bytes)); File.SetLastWriteTimeUtc(exact, previousTime);
+        var changed = await service.QuarantineAsync(new(scan.Id, [originalCandidate.Id]));
+        Assert(changed.Errors.Count > 0 && File.Exists(exact), "Same identity/size/timestamp but changed content is caught by scan SHA256");
+        scan = await service.ScanAsync();
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            var cancelledScan = await service.ScanAsync(cancelled.Token);
+            Assert(cancelledScan.Cancelled && !cancelledScan.Complete && cancelledScan.Items.Count == 0, "Scan cancellation returns honest partial inventory");
+        }
+        var cancelA = await Old(tempRoot, "cancel-a.tmp", "first payload");
+        var cancelB = await Old(tempRoot, "cancel-b.tmp", "second payload");
+        scan = await service.ScanAsync();
+        Action<CleanupProgress> stopAfterOne = p => { if (p.Processed == 1) service.RequestCancellation(); };
+        service.ProgressChanged += stopAfterOne;
+        var cancelledMove = await service.QuarantineAsync(new(scan.Id, [scan.Items.Single(i => i.Path == cancelA).Id, scan.Items.Single(i => i.Path == cancelB).Id]));
+        service.ProgressChanged -= stopAfterOne;
+        Assert(cancelledMove.Cancelled && cancelledMove.Status == "cancelled" && !File.Exists(cancelA) && File.Exists(cancelB), "Mid-operation cancellation commits one file and leaves next untouched");
+        Assert((await service.RestoreAsync(cancelledMove.Id)).Errors.Count == 0 && File.Exists(cancelA), "Cancelled cleanup still recovers completed files");
+        scan = await service.ScanAsync();
+        var purgeSource = await service.QuarantineAsync(new(scan.Id, [scan.Items.Single(i => i.Path == cancelA).Id, scan.Items.Single(i => i.Path == cancelB).Id]));
+        var exclusive = new FileStream(purgeSource.Items[0].StoredPath!, FileMode.Open, FileAccess.Read, FileShare.None);
+        var blockedPurge = await service.PurgeAsync(purgeSource.Id, "ELIMINAR DEFINITIVAMENTE");
+        exclusive.Dispose();
+        Assert(blockedPurge.Errors.Count > 0 && blockedPurge.Items.Count == 1 && blockedPurge.BytesDeleted == purgeSource.Items[1].Original.Bytes, "DELETE handle rejects an in-use file while other files continue");
+        Assert(blockedPurge.Volumes!.Count == 1 && blockedPurge.Volumes[0].FreeBefore.HasValue && blockedPurge.Volumes[0].FreeAfter.HasValue &&
+            blockedPurge.Volumes[0].ObservedFreeDelta == blockedPurge.Volumes[0].FreeAfter - blockedPurge.Volumes[0].FreeBefore, "Read actual Windows free-space before/after, retain signed delta without invented attribution");
+        var retriedPurge = await service.PurgeAsync(purgeSource.Id, "ELIMINAR DEFINITIVAMENTE");
+        Assert(retriedPurge.Errors.Count == 0 && retriedPurge.Items.Count == 0 && retriedPurge.BytesDeleted == purgeSource.Items[0].Original.Bytes, "Retry only deletes previously blocked file and counts this call exactly");
+        scan = await service.ScanAsync();
+        var cancellationPurgeSource = await service.QuarantineAsync(new(scan.Id, [scan.Items.Single(i=>i.Path==thumbnail).Id, scan.Items.Single(i=>i.Path==exact).Id]));
+        service.ProgressChanged += stopAfterOne;
+        var stoppedPurge = await service.PurgeAsync(cancellationPurgeSource.Id, "ELIMINAR DEFINITIVAMENTE");
+        service.ProgressChanged -= stopAfterOne;
+        Assert(stoppedPurge.Cancelled && stoppedPurge.Items.Count == 1 && stoppedPurge.BytesDeleted == cancellationPurgeSource.Items[0].Original.Bytes, "Purge cancellation retains remaining recovery data and exact completed bytes");
+        Assert((await service.RestoreAsync(stoppedPurge.Id)).Errors.Count == 0 && File.Exists(exact) && !File.Exists(thumbnail), "Recovery restores only non-purged files after cancellation");
+        Assert(!service.RequestCancellation() && service.Progress.Action == "idle", "No stale cancellation token after an operation");
+    }
+    finally
+    {
+        if (File.Exists(readOnly)) File.SetAttributes(readOnly, FileAttributes.Normal);
+        Directory.Delete(cleanFixture, true);
+    }
+    Console.WriteLine("PASS: actual Windows EvoClean categories, 70MB analysis, allocation, locked/protected files, recycle pair restoration, content revalidation and safe cancellation.");
+}
+
 var advisorHardware = new EvoNativeEngine.Models.SystemHardwareReport(
     new("Windows", "11", "test", "x64", "test", null, 1), new("Test CPU", "Test", 4, 8, 3000, "x64", "test"),
     new(8UL * 1024 * 1024 * 1024, 512UL * 1024 * 1024, 8, .5, 7.5, 93.75), [],

@@ -5,7 +5,7 @@ public class EvoCleanResult
 {
     [JsonPropertyName("status")] public string Status { get; set; } = "error";
     [JsonPropertyName("mode")] public string Mode { get; set; } = "Scan";
-    [JsonPropertyName("freedMB")] public double FreedMB { get; set; }
+    [JsonPropertyName("freedMB")] public double? FreedMB { get; set; }
     [JsonPropertyName("scannedMB")] public double ScannedMB { get; set; }
     [JsonPropertyName("details")] public string Details { get; set; } = "";
     [JsonPropertyName("executedAtUtc")] public DateTime ExecutedAtUtc { get; set; } = DateTime.UtcNow;
@@ -23,8 +23,8 @@ public sealed class EvoCleanService(SmartCleanupService cleanup) : IEvoCleanServ
         try
         {
             var plan = await cleanup.ScanAsync();
-            return new() { Status = "success", DurationMs = timer.ElapsedMilliseconds, ScannedMB = plan.Items.Sum(i => i.Bytes) / 1048576.0,
-                Details = $"{plan.Items.Count} candidatos. No se modificó nada. Usa la vista previa de Limpieza inteligente para seleccionar." };
+            return new() { Status = plan.Cancelled ? "cancelled" : plan.Complete ? "success" : "partial", DurationMs = timer.ElapsedMilliseconds, ScannedMB = plan.LogicalBytes / 1048576.0,
+                Details = $"{plan.Items.Count} candidatos (solo inventario observado; puede ser parcial). No se modificó nada. Usa la vista previa de Limpieza inteligente para seleccionar." };
         }
         catch (Exception ex) { return new() { Details = ex.Message, DurationMs = timer.ElapsedMilliseconds }; }
     }
