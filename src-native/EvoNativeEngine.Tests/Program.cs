@@ -299,6 +299,51 @@ if (OperatingSystem.IsWindows())
         Assert(stoppedPurge.Cancelled && stoppedPurge.Items.Count == 1 && stoppedPurge.BytesDeleted == cancellationPurgeSource.Items[0].Original.Bytes, "Purge cancellation retains remaining recovery data and exact completed bytes");
         Assert((await service.RestoreAsync(stoppedPurge.Id)).Errors.Count == 0 && File.Exists(exact) && !File.Exists(thumbnail), "Recovery restores only non-purged files after cancellation");
         Assert(!service.RequestCancellation() && service.Progress.Action == "idle", "No stale cancellation token after an operation");
+        // Exercise the actual Windows Shell recycle bin for this uniquely named test file only.
+        var shellOriginal = Path.Combine(personalRoot, "evo-shell-" + Guid.NewGuid().ToString("N") + ".tmp");
+        await File.WriteAllTextAsync(shellOriginal, "actual Windows recycled payload");
+        NativeCleanupFixture.Recycle(shellOriginal);
+        Assert(!File.Exists(shellOriginal), "Windows Shell actually recycled the fixture");
+        var realBin = SmartCleanupService.Roots().Single(r => r.Key.StartsWith("Papelera de usuario") &&
+            string.Equals(Path.GetPathRoot(r.Value), Path.GetPathRoot(shellOriginal), StringComparison.OrdinalIgnoreCase));
+        string? realMetadata = null;
+        foreach (var path in Directory.EnumerateFiles(realBin.Value, "$I*"))
+        {
+            var data = await File.ReadAllBytesAsync(path);
+            if (data.Length < 28) continue;
+            var offset = BitConverter.ToInt64(data, 0) == 2 ? 28 : 24;
+            var original = System.Text.Encoding.Unicode.GetString(data, offset, data.Length - offset).TrimEnd('\0');
+            if (string.Equals(original, shellOriginal, StringComparison.OrdinalIgnoreCase)) { realMetadata = path; break; }
+        }
+        Assert(realMetadata is not null, "Found real Shell $I metadata referencing only our fixture path");
+        var realPayload = Path.Combine(realBin.Value, "$R" + Path.GetFileName(realMetadata!)[2..]);
+        var metadataBytes = await File.ReadAllBytesAsync(realMetadata!);
+        File.SetLastWriteTimeUtc(realPayload, DateTime.UtcNow.AddDays(-10));
+        File.SetLastWriteTimeUtc(realMetadata!, DateTime.UtcNow.AddDays(-10));
+        var realBinService = new SmartCleanupService(store, new OperationJournal(), new() { [realBin.Key] = realBin.Value });
+        var realBinPlan = await realBinService.ScanAsync();
+        var realEntry = realBinPlan.Items.Single(i => i.Path == realPayload);
+        var realBinQuarantine = await realBinService.QuarantineAsync(new(realBinPlan.Id, [realEntry.Id]));
+        Assert(realBinQuarantine.Errors.Count == 0 && !File.Exists(realMetadata!) && !File.Exists(realPayload), "Actually quarantine the Shell-generated recycle pair");
+        Assert((await realBinService.RestoreAsync(realBinQuarantine.Id)).Errors.Count == 0 &&
+            (await File.ReadAllBytesAsync(realMetadata!)).SequenceEqual(metadataBytes) &&
+            await File.ReadAllTextAsync(realPayload) == "actual Windows recycled payload", "Actual recycle entry restored byte-for-byte, including original $I metadata");
+        realBinPlan = await realBinService.ScanAsync();
+        realBinQuarantine = await realBinService.QuarantineAsync(new(realBinPlan.Id, [realBinPlan.Items.Single(i=>i.Path==realPayload).Id]));
+        var realBinPurged = await realBinService.PurgeAsync(realBinQuarantine.Id, "ELIMINAR DEFINITIVAMENTE");
+        Assert(realBinPurged.Errors.Count == 0 && realBinPurged.Items.Count == 0 && !File.Exists(realMetadata!) && !File.Exists(realPayload), "Purge actually removes only our recycled entry and its metadata");
+        var evidencePath = Environment.GetEnvironmentVariable("EVO_CLEANUP_EVIDENCE");
+        if (!string.IsNullOrWhiteSpace(evidencePath))
+            await File.WriteAllTextAsync(evidencePath, JsonSerializer.Serialize(new {
+                TestedAtUtc = DateTime.UtcNow, Windows = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+                Filesystem = new DriveInfo(Path.GetPathRoot(cleanFixture)!).DriveFormat,
+                InitialLogicalBytes = scan.LogicalBytes, AnalysisOf70MiBFile = true, LockedAndProtectedFilesSkipped = true,
+                SameSizeTimestampContentTamperingRejected = true, CancellationBetweenFilesVerified = true,
+                RealShellRecycleQuarantineRestorePurge = true,
+                PartialPurge = blockedPurge, RetryPurge = retriedPurge, CancelledPurge = stoppedPurge,
+                ShellPurge = realBinPurged
+            }, new JsonSerializerOptions { WriteIndented = true }));
+
     }
     finally
     {
@@ -581,4 +626,25 @@ sealed class FakeOptionalPackages : IOptionalPackages
     public Task<PackageState[]> ListAsync() => Task.FromResult(states.ToArray());
     public Task RemoveAsync(PackageState p) { states.Remove(p); return Task.CompletedTask; }
     public Task RestoreAsync(PackageState p) { states.Add(p); return Task.CompletedTask; }
+}
+
+sealed class NativeCleanupFixture
+{
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+    private struct ShellOperation
+    {
+        public IntPtr Window; public uint Function;
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] public string From;
+        public IntPtr To; public ushort Flags;
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)] public bool Aborted;
+        public IntPtr Mappings, Title;
+    }
+    [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, ExactSpelling=true)]
+    private static extern int SHFileOperationW(ref ShellOperation operation);
+    public static void Recycle(string path)
+    {
+        var operation = new ShellOperation { Function = 3, From = path + "\0\0", Flags = 0x0454 };
+        var code = SHFileOperationW(ref operation);
+        if (code != 0 || operation.Aborted) throw new IOException("Windows Shell recycle fixture failed: " + code);
+    }
 }

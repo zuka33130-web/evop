@@ -12,7 +12,19 @@ jobs:
         with:
           dotnet-version: '8.0.x'
       - run: dotnet build src-native/EvoNativeEngine/EvoNativeEngine.csproj --configuration Release
-      - run: dotnet run --project src-native/EvoNativeEngine.Tests --configuration Release
+      - name: Execute Windows native and real EvoClean acceptance tests
+        env:
+          EVO_CLEANUP_EVIDENCE: native-cleanup-evidence.json
+        run: |
+          dotnet run --project src-native/EvoNativeEngine.Tests --configuration Release | Tee-Object -FilePath native-windows-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: EvoClean-Windows-validation
+          path: |
+            native-windows-tests.log
+            native-cleanup-evidence.json
       - run: dotnet publish src-native/EvoNativeEngine/EvoNativeEngine.csproj --configuration Release --runtime win-x64 --self-contained true -o native-artifact
       - uses: actions/upload-artifact@v4
         with:

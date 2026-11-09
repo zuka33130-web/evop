@@ -16,17 +16,33 @@ Los endpoints heredados de ejecución sin selección dejan de ejecutar el PS1 de
 
 Cuarentena: `%LocalAppData%\EvoOptimizer\Quarantine\{id}`. Manifiestos: `%LocalAppData%\EvoOptimizer\Backups\state_cleanup_{id}_latest.json`. Exportar el recibo con ID; la restauración sigue disponible tras reiniciar. Mover a cuarentena no libera espacio; la purga informa bytes lógicos realmente borrados, no una medida garantizada de espacio físico libre.
 
-Solo se proponen archivos de más de siete días y hasta 64 MB cada uno, dentro de:
+Solo se proponen archivos de más de siete días, sin estimación de tamaños ni el antiguo límite de 64 MB por archivo, dentro de:
 
 - `%LocalAppData%\Temp`
+- `%WinDir%\Temp` (solo con permisos, sin elevar ni saltar protecciones)
+- Miniaturas `thumbcache_*.db` en Explorer (no otros archivos ni subcarpetas)
+- Papelera `$Recycle.Bin\{SID actual}`: pares de **archivos** `$R`/`$I`, no carpetas ni otros usuarios; metadatos `$I` incluidos en cuarentena/restauración
+- Logs Discord, caché Discord, Crashpad reports de Chrome/Edge (apps cerradas)
 - CrashDumps de usuario
 - WER ReportArchive de usuario
 - D3DSCache, opcional y con advertencia de recompilación/stutter
 - Cache del perfil Default de Chrome y Edge, únicamente si el proceso de navegador no está abierto
 
-No se incluyen cookies, contraseñas, historial, Prefetch, WinSxS, SoftwareDistribution ni Windows Update. No se fuerzan cierres ni se suspenden servicios. No se eliminan directorios completos. Escaneo acotado: 15 segundos, 30000 archivos visitados, 3000 candidatos, profundidad 10. No es una búsqueda exhaustiva.
+No se incluyen cookies, contraseñas, historial, Prefetch, WinSxS, SoftwareDistribution ni Windows Update. No se fuerzan cierres ni se suspenden servicios. No se eliminan directorios completos. Escaneo acotado: 60 segundos (también durante hashing), 100000 archivos visitados, 10000 candidatos/10000 incidencias, profundidad 10. Los inventarios cancelados/limitados se marcan parciales, sin extrapolar tamaños. No es una búsqueda exhaustiva.
 
-Protecciones: rutas predefinidas (no se aceptan rutas arbitrarias del cliente), IDs pertenecientes a la vista previa, comprobación de tamaño/fecha, rechazo de reparse points en ancestros, manifiestos de recuperación, no sobrescritura y saltos ante archivos bloqueados. El movimiento puede fallar si las ubicaciones están en volúmenes diferentes; no se sustituye por borrado directo. Esto no es una frontera de seguridad frente a malware del mismo usuario ni una transacción de sistema de archivos: hay carreras posibles y los errores se comunican. Revisar antes de purgar.
+Protecciones: rutas predefinidas (no se aceptan rutas arbitrarias del cliente), IDs pertenecientes a la vista previa, comprobación de tamaño/fecha, identidad de archivo y volumen, SHA-256 capturado en el escaneo y releído antes de mover, asignación leída de FILE_STANDARD_INFO, exclusión de hard links, archivos readonly/system/offline, rutas resueltas mediante el handle, rechazo de reparse points en ancestros, manifiestos de recuperación, no sobrescritura y saltos ante archivos bloqueados. El movimiento puede fallar si las ubicaciones están en volúmenes diferentes; no se sustituye por borrado directo. Esto no es una frontera de seguridad frente a malware del mismo usuario ni una transacción de sistema de archivos: hay carreras posibles y los errores se comunican. Revisar antes de purgar.
+
+### Categorías, medición, cancelación y evidencias Windows
+
+La UI agrupa candidatos y permite seleccionar/quitar cada categoría (hasta 500 candidatos principales por acción; los pares de papelera se seleccionan juntos). Se muestran bytes lógicos exactos de lo analizado y bytes asignados reportados por Windows, no “GB recuperables” inventados. Los archivos bloqueados se omiten sin cerrar procesos ni Explorer.
+
+Cada análisis guarda su inventario/omisiones en `state_cleanupPlan_{id}_latest.json`. Cada operación guarda resultados por elemento (`quarantined`, `restored`, `deleted`, `skipped`), motivos, errores, estado de cancelación y pendientes. Purga usa un handle exclusivo con acceso DELETE, compara identidad/hash/tamaño/número de enlaces y pide a Windows el borrado de ese handle; comprueba ausencia después de cerrarlo. Un archivo ocupado o alterado no se cuenta eliminado. Guarda el avance tras cada archivo purgado.
+
+`GET /api/cleanup/progress` devuelve contadores nativos, no porcentaje estimado. `POST /api/cleanup/cancel` elude únicamente el semáforo de mutaciones (no autenticación/origen); cancela el hash del análisis o detiene la mutación entre archivos. Se conserva el recibo de lo completado y el respaldo de lo pendiente. No se usa AbortController como sustituto de cancelar el motor. Un par de papelera ya iniciado termina de procesar su compañero antes de parar; cualquier fallo queda pendiente de recuperación. No hay rollback ficticio de purgas irreversibles.
+
+Cada purga registra `AvailableFreeSpace` real antes/después por unidad y el **delta neto firmado**. También registra los bytes lógicos cuya eliminación se verificó. Son métricas diferentes: el delta puede ser negativo por actividad externa, metadatos o recibos. No se atribuye íntegramente al limpiador ni se cambia un delta negativo a cero. Una unidad no medible devuelve null, no una estimación. La cuarentena solo se mueve dentro del mismo volumen: otras unidades se omiten con explicación, nunca se cambia silenciosamente a copia+borrado.
+
+Validación Windows en `EvoNativeEngine.Tests`: archivos reales de 70 MiB, bloqueo de archivo, readonly, protección de archivos personales/miniaturas, cambio de contenido conservando tamaño/fecha, cancelación a mitad de cuarentena y purga, reintento y restauración, lectura real de espacio libre. Incluye un archivo único enviado a la **papelera real con Windows Shell**, identificación de su `$I`, cuarentena/restauración exacta del par y purga únicamente de ese archivo de prueba. No se vacía la papelera del runner. CI sube `EvoClean-Windows-validation` con salida y JSON de resultados/mediciones; las pruebas no son solo compilación ni un filesystem simulado.
 
 ### Registro
 

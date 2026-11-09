@@ -36,6 +36,10 @@ try {
     if ($catalog.Count -lt 1) { throw 'Catálogo vacío.' }
     # Resolve recovery/cleanup DI without applying system changes.
     Invoke-WebRequest "$base/api/cleanup/receipts" -Headers $headers | Out-Null
+    $cleanupProgress = Invoke-RestMethod "$base/api/cleanup/progress" -Headers $headers
+    if ($cleanupProgress.action -ne 'idle') { throw 'Limpieza inesperadamente activa al iniciar.' }
+    $cleanupCancel = Invoke-RestMethod "$base/api/cleanup/cancel" -Method Post -Headers $headers
+    if ($cleanupCancel.accepted) { throw 'Se canceló una limpieza inexistente.' }
     $refusedRecovery = Invoke-WebRequest "$base/api/recovery/all" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"confirmation":"INVALID"}' -SkipHttpErrorCheck
     if ($refusedRecovery.StatusCode -ne 400) { throw 'Recuperación global no exige confirmación.' }
     $refusedClean = Invoke-WebRequest "$base/api/clean/apply" -Method Post -Headers $headers -SkipHttpErrorCheck

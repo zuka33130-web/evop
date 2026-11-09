@@ -18,3 +18,7 @@ test-results/
 
 # Local audit scratch and sandbox browser libraries
 .cache/
+
+# Native Windows acceptance evidence (uploaded by CI, not source)
+native-cleanup-evidence.json
+native-windows-tests.log
